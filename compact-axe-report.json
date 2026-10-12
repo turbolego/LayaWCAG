@@ -1,0 +1,32 @@
+[
+  {
+    "id": "heading-order",
+    "impact": "moderate",
+    "help": "Heading levels should only increase by one",
+    "nodes": [
+      {
+        "html": "<h6>Heading Level 6 (h6)</h6>",
+        "message": "Heading order invalid"
+      }
+    ]
+  },
+  {
+    "id": "region",
+    "impact": "moderate",
+    "help": "All page content should be contained by landmarks",
+    "nodes": [
+      {
+        "html": "<del id=\"del-tag\" aria-label=\"del tag\">del tag direct child</del>",
+        "message": "Some page content is not contained by landmarks"
+      },
+      {
+        "html": "<h6 id=\"h6-tag\">h6 tag direct child</h6>",
+        "message": "Some page content is not contained by landmarks"
+      },
+      {
+        "html": "<ins id=\"ins-tag\" aria-label=\"ins tag\">ins tag direct child</ins>",
+        "message": "Some page content is not contained by landmarks"
+      }
+    ]
+  }
+]
