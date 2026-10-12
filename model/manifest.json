@@ -9,7 +9,7 @@
       "data": {
         "name": "laya-wcag.onnx.data",
         "size": 395021312,
-        "sha256": "4e88b34f15c1ef3feef76f0517d1179f4a46cf70762b25b2372e0ab8c28e4044",
+        "sha256": "6222a7b4b04f799c8c72812d367a9228b48327b2e5b748179f7f67222d102124",
         "parts": [
           "laya-wcag.0000.onnx.data",
           "laya-wcag.0001.onnx.data",
@@ -27,8 +27,7 @@
           "laya-wcag.0013.onnx.data",
           "laya-wcag.0014.onnx.data",
           "laya-wcag.0015.onnx.data"
-        ],
-        "mount": "laya-wcag.onnx.data"
+        ]
       }
     }
   }
