@@ -8,8 +8,8 @@
       "onnx": "laya-wcag.onnx",
       "data": {
         "name": "laya-wcag.onnx.data",
-        "size": 395021312,
-        "sha256": "95b08ddccabaa7ce2413d64a1014ebfaf50a146926ff869387312b04d96467a7",
+        "size": 395545600,
+        "sha256": "6d2116d639be5839f8334d6ea593f33b84132e4dbefce1ff6d6d0d4f321de8ed",
         "parts": [
           "laya-wcag.0000.onnx.data",
           "laya-wcag.0001.onnx.data",
@@ -28,7 +28,8 @@
           "laya-wcag.0014.onnx.data",
           "laya-wcag.0015.onnx.data"
         ]
-      }
+      },
+      "note": "v6 + contrast (1.4.3) MLP fine-tune; only column 14 changed"
     }
   }
 }
