@@ -28,13 +28,17 @@ FT = "/tmp/kaggle_out_contrast/contrast_ft"
 J = json.load(open(os.path.join(FT, "row_bias.json")))["col"]  # 14 (1.4.3)
 print("contrast column index:", J, flush=True)
 
-# stitch v6 data next to a graph copy, load
+# Load a CLEAN v6 base graph + data. BASE_ONNX/BASE_DATA_DIR override the default model/ paths
+# (needed because model/ now holds the already-patched graph).
+BASE_ONNX = os.environ.get("BASE_ONNX", os.path.join(MODEL_DIR, "laya-wcag.onnx"))
+BASE_DATA_DIR = os.environ.get("BASE_DATA_DIR", MODEL_DIR)
 buf = bytearray()
-for p in sorted(glob.glob(os.path.join(MODEL_DIR, "laya-wcag.00*.onnx.data"))): buf += open(p, "rb").read()
+for p in sorted(glob.glob(os.path.join(BASE_DATA_DIR, "laya-wcag.00*.onnx.data"))): buf += open(p, "rb").read()
 d = tempfile.mkdtemp()
-shutil.copy(os.path.join(MODEL_DIR, "laya-wcag.onnx"), d + "/laya-wcag.onnx")
+shutil.copy(BASE_ONNX, d + "/laya-wcag.onnx")
 open(d + "/laya-wcag.onnx.data", "wb").write(bytes(buf))
 m = onnx.load(d + "/laya-wcag.onnx")
+assert not any("mlp" in (n.name or "") for n in m.graph.node), "base graph already has MLP nodes"
 
 sd = torch.load(os.path.join(FT, "mlp.pt"), map_location="cpu")
 W0 = sd["0.weight"].detach().numpy().astype(np.float32)  # [128,1024]
@@ -61,19 +65,23 @@ nodes = [
     helper.make_node("Add", ["mlp_out", "mlp_b3"], ["mlp_logit"], name="mlp_add3"),  # [batch,1]
     # broadcast the single MLP logit into a 63-d vector, masked to column J only
     helper.make_node("Mul", ["mlp_logit", "contrast_col_mask"], ["mlp_contrib"], name="mlp_mask"),
-    helper.make_node("Add", ["criterion_scores", "mlp_contrib"], ["criterion_scores_patched"], name="mlp_add_scores"),
+    # add the MLP correction back into the SAME output name the app reads: criterion_scores.
+    # The old head Add produced 'criterion_scores'; rename it to a base tensor and write the
+    # final sum into 'criterion_scores' so the graph output name the app reads is preserved.
+    helper.make_node("Add", ["criterion_scores_base", "mlp_contrib"], ["criterion_scores"], name="mlp_add_scores"),
 ]
 m.graph.node.extend(nodes)
 m.graph.initializer.extend(new_inits)
 
-# repoint the graph output at the patched scores
-for o in m.graph.output:
-    if o.name == "criterion_scores":
-        pass
-# rename: make 'criterion_scores_patched' the output by updating the existing output name
-# (the old Add already produced criterion_scores; we add on top)
-del m.graph.output[:]
-m.graph.output.append(helper.make_tensor_value_info("criterion_scores_patched", TensorProto.FLOAT, ["batch_size", 63]))
+# rename the existing head output 'criterion_scores' -> 'criterion_scores_base' (its producer
+# and consumers), and keep the graph output named 'criterion_scores' (produced by mlp_add_scores).
+old_producer = None
+for n in m.graph.node:
+    if "criterion_scores" in n.output and n.name != "mlp_add_scores":
+        old_producer = n; break
+assert old_producer is not None, "could not find the head Add producing criterion_scores"
+old_producer.output[list(old_producer.output).index("criterion_scores")] = "criterion_scores_base"
+# graph output stays named 'criterion_scores' (already declared) — no change needed.
 
 # Gelu with com.microsoft domain requires opset import; add if missing
 domains = {op.domain for op in m.opset_import}
@@ -84,6 +92,8 @@ if "com.microsoft" not in domains:
 
 os.makedirs("build/contrast_patch", exist_ok=True)
 # save with external data
+# Force IR version to 9 (ORT-web 1.30 supports up to IR 9; onnx.save bumps it to 10 by default)
+m.ir_version = 9
 onnx.save(m, "build/contrast_patch/laya-wcag-mlp.onnx", save_as_external_data=True,
           all_tensors_to_one_file=True, location="laya-wcag-mlp.onnx.data",
           size_threshold=1024, convert_attribute=False)
