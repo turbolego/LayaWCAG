@@ -46,20 +46,20 @@ def find_data_dir():
     env = os.environ.get("WCAG_DATA_DIR")
     cands = [env] if env else []
     cands += glob.glob("/kaggle/input/*/laya-wcag-data") + glob.glob("/kaggle/input/laya-wcag-data")
-    cands += glob.glob("/kaggle/input/**/train_wcag_ibm.jsonl", recursive=True)
+    cands += glob.glob("/kaggle/input/**/train_final.jsonl", recursive=True)
     for c in cands:
-        if c and os.path.isfile(os.path.join(c, "train_wcag_ibm.jsonl")):
+        if c and os.path.isfile(os.path.join(c, "train_final.jsonl")):
             return c
     # last resort: search for the file anywhere under /kaggle/input
     for root, dirs, files in os.walk("/kaggle/input"):
-        if "train_wcag_ibm.jsonl" in files:
+        if "train_final.jsonl" in files:
             return root
-    raise FileNotFoundError("train_wcag_ibm.jsonl not found under /kaggle/input")
+    raise FileNotFoundError("train_final.jsonl not found under /kaggle/input")
 
 DATA_DIR = find_data_dir()
 print("data dir:", DATA_DIR)
-train_rows = load_jsonl(os.path.join(DATA_DIR, "train_wcag_ibm.jsonl"))
-val_rows = load_jsonl(os.path.join(DATA_DIR, "val_wcag_ibm.jsonl"))
+train_rows = load_jsonl(os.path.join(DATA_DIR, "train_final.jsonl"))
+val_rows = load_jsonl(os.path.join(DATA_DIR, "val_final.jsonl"))
 print(f"train: {len(train_rows)} rows, val: {len(val_rows)} rows")
 print(f"train positives: {sum(1 for r in train_rows if any(r['labels']))}")
 print(f"val positives:   {sum(1 for r in val_rows if any(r['labels']))}")
@@ -101,9 +101,9 @@ print(f"Model initialized; trainable parameters: {trainable:,}")'''
 
 TRAIN_CFG_CELL = '''## Training Configuration
 
-learning_rate = 5e-4   # head-only: the encoder is frozen, so a larger LR is safe and converges fast
-batch_size = 8
-num_epochs = 30        # small dataset: more epochs with early stopping on val F1
+learning_rate = 2e-4   # head-only; the encoder is frozen, so a larger LR converges fast on a bigger corpus
+batch_size = 16
+num_epochs = 15        # ~350 steps/epoch at 5.6k rows; early stopping on val macro-F1 guards overfit
 num_criteria = len(WCAG_22_CRITERIA)
 
 # Class imbalance: most criteria have few or zero positives. pos_weight up-weights the
@@ -118,7 +118,7 @@ print(f"pos_weight range: {pos_weight.min():.1f} .. {pos_weight.max():.1f}")'''
 
 TOKENIZE_CELL = '''## Tokenize and build the DataLoader
 
-MAX_LEN = 512  # the exported graph takes dynamic length; 512 matches the browser runtime
+MAX_LEN = 256  # element-level rows are short; 256 keeps the frozen encoder pass fast on 5.6k rows
 
 def encode_row(row):
     enc = tokenizer(row["state"], truncation=True, max_length=MAX_LEN, padding=False)
