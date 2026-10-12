@@ -1,71 +1,26 @@
 import * as ort from "./vendor/ort.min.mjs";
 import { Tokenizer } from "./vendor/tokenizers.min.mjs";
-import { Laya } from "./laya-core.js";
+import { WcagLaya, loadCriteria } from "./laya-wcag-core.js";
 
 const $ = (id) => document.getElementById(id);
-// Two base checkpoints can be offered side by side: the general English model, and (optionally) a
-// second one fine-tuned for typed-decision workflows, convaiinnovations/laya-typed-decisions. Each has
-// its own folder and manifest. Override a folder with ?modelBase=... / ?modelBaseTyped=... (needs CORS
-// if it points elsewhere), or point a deployment at Hugging Face through site-config.json
-// ({"modelBase": "...", "modelBaseTyped": "..."}). The typed base is entirely optional: if its
-// manifest can't be found, it's left out of the "Base model" list and the page works as before.
-const BASES = {
-  laya: { label: "Laya (general)", dir: "./model/", param: "modelBase", configKey: "modelBase" },
-  typed: { label: "Laya (typed decisions)", dir: "./model-typed/", param: "modelBaseTyped", configKey: "modelBaseTyped" },
-  wcag: { label: "WCAG 2.2 Violations", dir: "./model/", param: "modelBase", configKey: "modelBase" },
-};
-let MODEL_DIR = BASES.laya.dir;
-let MANIFEST = null;
-let BASE_KEY = "laya";
+// One bundled checkpoint: the WCAG 2.2 fine-tune of Laya's encoder, served from ./model/.
+// Override with ?modelBase=<url-with-trailing-slash> (needs CORS if it points elsewhere).
+let MODEL_DIR = new URLSearchParams(location.search).get("modelBase") || "./model/";
+MODEL_DIR = MODEL_DIR.replace(/\/?$/, "/");
 
-const PRESETS = {
-  "Support ticket": {
-    state: { ticket: { subject: "App crashes on launch", text: "Since the last update, the app closes as soon as I open it. I have a demo in one hour!" } },
-    questions: {
-      team: { type: "choice", instructions: "Which team should handle this?", criteria: { bug: "Something is broken", how_to: "A usage question", sales: "Pricing or plans" } },
-      urgency: { type: "score", instructions: "How urgent is this?", criteria: ["Can wait", "This week", "Today", "Right now"] },
-      angry: { type: "noul", instructions: "The customer sounds angry" },
-    },
-  },
-  "Agent guardrail (two wordings)": {
-    state: "Agent plan: run `DELETE FROM customers WHERE last_login < '2020-01-01'` on the production database. No backup has been taken and no human has reviewed this command.",
-    questions: {
-      safe_without_approval: { type: "noul", instructions: "Is this safe to run without a human approving it first?" },
-      destructive: { type: "noul", instructions: "The command is destructive and cannot be undone" },
-      needs_human: { type: "noul", instructions: "A human should approve this command before it runs" },
-    },
-  },
-  "Sales lead scoring": {
-    state: "Hi, I'm the VP of Engineering at a 400-person logistics company. We're evaluating vendors this quarter, have budget approved, and want a demo next week with our security team.",
-    questions: {
-      lead_quality: { type: "score", instructions: "How qualified is this sales lead?", criteria: ["Not a fit", "Weak interest", "Some interest", "Strong buying signals"] },
-      next_step: { type: "choice", instructions: "What should sales do next?", criteria: { book_demo: "Schedule a demo", nurture: "Add to a nurture campaign", ignore: "No action needed" } },
-    },
-  },
-  "Patient message routing": {
-    state: "Patient message: I've had chest tightness and shortness of breath since this morning, and my left arm feels numb.",
-    questions: {
-      route: { type: "choice", instructions: "Where should this message go?", criteria: { emergency: "Needs immediate emergency attention", nurse: "Nurse triage within a day", admin: "Administrative request", refill: "Medication refill" } },
-      urgent: { type: "noul", instructions: "The patient describes symptoms that could be life-threatening" },
-    },
-  },
-  "Delivery exception": {
-    state: "Package scanned at depot. Address label partially unreadable. Recipient phone number missing. The customer needs the parcel by Friday for an event.",
-    questions: {
-      action: { type: "choice", instructions: "What should support do?", criteria: { reship: "Send a replacement", notify: "Notify the customer of the delay", fix_address: "Contact the customer to confirm the address", wait: "Wait, no action needed" } },
-      at_risk: { type: "noul", instructions: "The delivery is at risk of missing the customer's deadline" },
-    },
-  },
-  "Product review": {
-    state: "Battery life is great and the screen is sharp, but the speaker crackles at high volume. Would still recommend.",
-    questions: {
-      sentiment: { type: "score", instructions: "Overall sentiment of the review", criteria: ["Very negative", "Negative", "Mixed", "Positive", "Very positive"] },
-      mentions_defect: { type: "noul", instructions: "The reviewer reports a hardware defect" },
-    },
-  },
+// Example HTML snippets that exercise common violation types. The model only sees the markup
+// text (no CSS, no rendered layout), so contrast/layout-style checks are inherently weak here.
+const EXAMPLES = {
+  "Image without alt text": '<img src="chart.png" width="200">\n<p>Q3 results</p>',
+  "Button with no accessible name": '<div role="button" class="btn"></div>',
+  "Form input without label": '<form><input type="email" name="email" placeholder="you@example.com"><button>Go</button></form>',
+  "Heading level skipped": '<h1>Page title</h1>\n<h4>First section</h4>\n<p>Body text</p>',
+  "Link with no discernible text": '<a href="/next"><img src="arrow.gif"></a>',
+  "Iframe without title": '<iframe src="https://example.com/widget" width="600" height="400"></iframe>',
+  "Clean semantic snippet": '<main aria-label="Main">\n  <h1>Contact us</h1>\n  <label for="email">Email</label>\n  <input id="email" type="email" name="email">\n  <img src="logo.png" alt="Company logo">\n  <button type="submit">Send</button>\n</main>',
 };
 
-let laya = null;
+let wcag = null;
 let backendUsed = "";
 let lastResult = null;
 
@@ -93,7 +48,7 @@ async function fetchBytes(url, onProgress) {
 // Parts are kept in the browser's Cache Storage, keyed by the file's hash, so a repeat visit does not download them again.
 async function fetchParts(entry, onProgress) {
   let cache = null;
-  try { cache = await caches.open("laya-" + entry.sha256.slice(0, 16)); } catch { /* private mode etc.: just download */ }
+  try { cache = await caches.open("laya-wcag-" + entry.sha256.slice(0, 16)); } catch { /* private mode etc.: just download */ }
   const out = new Uint8Array(entry.size); let off = 0, fromCache = 0;
   for (const part of entry.parts) {
     const url = MODEL_DIR + part;
@@ -116,28 +71,27 @@ async function hasWebGPU() {
 }
 
 async function loadModel() {
-  $("loadBtn").disabled = true; $("runBtn").disabled = true; $("verifyBtn").disabled = true;
-  $("badges").innerHTML = ""; laya = null;
+  $("loadBtn").disabled = true; $("runBtn").disabled = true;
+  $("badges").innerHTML = ""; wcag = null;
   try {
-    const v = MANIFEST.variants[$("variant").value];
     let want = $("backend").value;
     const gpu = await hasWebGPU();
-    // ONNX Runtime's WebGPU MatMulNBits kernel only supports 2- and 4-bit weights, so the 8-bit build cannot create a WebGPU session.
-    const key = $("variant").value;
-    const noWebGPU = key === "q8e8";
-    let backendNote = "";
-    if (want === "auto" && gpu && noWebGPU) backendNote = "Auto chose WASM: this build cannot run on WebGPU. Pick the int4 build to use WebGPU.";
-    if (want === "auto") want = gpu && !noWebGPU ? "webgpu" : "wasm";
-    if (want === "webgpu" && noWebGPU) throw new Error("The int8 block-wise build cannot run on WebGPU (its 8-bit operator has no WebGPU kernel; only 2- and 4-bit are supported). Choose the int4 build for WebGPU, or use WASM for this build.");
-    if (want === "webgpu" && !gpu) throw new Error("WebGPU is not available in this browser. Choose WASM or use a recent Chrome/Edge.");
+    if (want === "auto") want = gpu ? "webgpu" : "wasm";
+    if (want === "webgpu" && !gpu) {
+      badge("WebGPU not available — using WASM");
+      want = "wasm";
+    }
 
     ort.env.wasm.wasmPaths = new URL("./vendor/", import.meta.url).href;
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
 
-    setStatus("Loading tokenizer and config…"); setProgress(0);
-    const [tj, tc, cfg] = await Promise.all(
-      ["tokenizer.json", "tokenizer_config.json", "rl_agent_config.json"].map((f) => fetch(MODEL_DIR + f).then((r) => { if (!r.ok) throw new Error(f + ": HTTP " + r.status); return r.json(); })));
+    setStatus("Loading tokenizer, config and criteria list…"); setProgress(0);
+    const [tj, tc, criteria, manifest] = await Promise.all(
+      ["tokenizer.json", "tokenizer_config.json", "wcag_criteria.json", "manifest.json"].map((f) =>
+        fetch(MODEL_DIR + f).then((r) => { if (!r.ok) throw new Error(f + ": HTTP " + r.status); return r.json(); })));
     const tokenizer = new Tokenizer(tj, tc);
+    const v = manifest.variants.wcag;
+    if (!v) throw new Error("manifest.json has no \"wcag\" variant");
 
     const t0 = performance.now();
     const progress = (name) => (got, total) => { setProgress(total ? got / total : null); setStatus(`Downloading ${name}: ${(got / 1048576).toFixed(0)}${total ? " / " + (total / 1048576).toFixed(0) : ""} MB`); };
@@ -150,32 +104,36 @@ async function loadModel() {
     const session = await ort.InferenceSession.create(graph, {
       executionProviders: want === "webgpu" ? ["webgpu", "wasm"] : ["wasm"],
       graphOptimizationLevel: "all",
-      externalData: [{ path: v.data.name, data }],
+      // ORT-web mounts preloaded external data under the *location string inside the ONNX graph*
+    // (v.data.name), not under the HTTP part filenames in v.data.parts.
+    externalData: [{ path: v.data.name, data }],
     });
     const initMs = performance.now() - t1;
-    laya = new Laya(ort, session, tokenizer, cfg);
+    wcag = new WcagLaya(ort, session, tokenizer, criteria);
     backendUsed = want;
+
     setStatus("Warming up…");
     const w0 = performance.now();
-    await laya.systemOne("warm up", { w: { type: "noul", instructions: "This is a warm-up call" } });
+    await wcag.systemOne("<p>warm up</p>");
     const warmMs = performance.now() - w0;
     setStatus(`Ready. Download ${(dlMs / 1000).toFixed(1)} s${fetchParts.lastFromCache ? ` (${fetchParts.lastFromCache} of ${v.data.parts.length} parts from browser cache)` : ""}, session init ${(initMs / 1000).toFixed(1)} s, warm-up call ${warmMs.toFixed(0)} ms.`, "");
     badge(want === "webgpu" ? "WebGPU" : "WASM" + (ort.env.wasm.numThreads > 1 ? ` · ${ort.env.wasm.numThreads} threads` : " · 1 thread"), true);
-    badge($("variant").selectedOptions[0].textContent.split(" (")[0]);
-    if (backendNote) badge(backendNote);
+    badge("WCAG 2.2 · 63 criteria");
     badge("cross-origin isolated: " + (self.crossOriginIsolated ? "yes" : "no"));
-    $("runBtn").disabled = false; $("verifyBtn").disabled = false;
+    $("runBtn").disabled = false;
   } catch (e) {
     console.error(e); setStatus("Could not load the model: " + (e?.message || e), "warn");
   } finally { setProgress(null); $("loadBtn").disabled = false; }
 }
 
-function fmtPct(x) { return (x * 100).toFixed(1) + "%"; }
+const fmtPct = (x) => (x * 100).toFixed(1) + "%";
 
-function barRow(name, p, top) {
+function barRow(name, sub, p, top) {
   const d = document.createElement("div"); d.className = "bar" + (top ? " top" : "");
   d.innerHTML = `<span class="name"></span><span class="track"><span class="fill" style="display:block;width:${(p * 100).toFixed(1)}%"></span></span><span class="val">${fmtPct(p)}</span>`;
-  d.querySelector(".name").textContent = name; d.querySelector(".name").title = name;
+  const n = d.querySelector(".name");
+  n.textContent = name;
+  n.title = sub ? `${name} — ${sub}` : name;
   return d;
 }
 
@@ -183,132 +141,55 @@ function render(res) {
   lastResult = res;
   $("resultCard").style.display = "block";
   $("sLatency").textContent = res.latency_ms.toFixed(0);
-  $("sTokens").textContent = res.usage.input_tokens;
+  $("sViolations").textContent = String(res.violations.length);
   $("sBackend").textContent = backendUsed === "webgpu" ? "WebGPU" : "WASM";
-  $("raw").textContent = JSON.stringify(res, null, 2);
-  const thr = Number($("thresh").value);
-  const box = $("answers"); box.innerHTML = "";
-  for (const [qid, a] of Object.entries(res.answers)) {
-    const q = document.createElement("div"); q.className = "q";
-    const head = document.createElement("div"); head.className = "qhead";
-    const headline = a.type === "choice" ? a.choice : a.type === "score" ? `score ${a.score.toFixed(2)}` : `P(true) ${fmtPct(a.noul)}`;
-    head.innerHTML = `<span><span class="qname"></span> <span class="qtype">${a.type}</span></span><span><b class="hl"></b></span>`;
-    head.querySelector(".qname").textContent = qid; head.querySelector(".hl").textContent = headline;
-    q.appendChild(head);
-    if (a.type === "choice") {
-      const entries = Object.entries(a.probabilities); const mx = Math.max(...entries.map((e) => e[1]));
-      entries.forEach(([k, p]) => q.appendChild(barRow(k, p, p === mx)));
-    } else if (a.type === "score") {
-      const mx = Math.max(...Object.values(a.probabilities));
-      Object.entries(a.probabilities).forEach(([i, p]) => q.appendChild(barRow(`${i}: ${a.legend[i]}`, p, p === mx)));
-    } else {
-      q.appendChild(barRow("yes", a.noul, a.noul >= 0.5)); q.appendChild(barRow("no", 1 - a.noul, a.noul < 0.5));
-    }
-    const m = document.createElement("div"); m.className = "meta"; m.textContent = `confidence ${a.confidence.toFixed(3)} (Laya defines this as 1 minus the normalized entropy of the distribution, so a spread-out score question reads low even when its top level is likely)`; q.appendChild(m);
-    const dec = document.createElement("div"); dec.className = "decision";
-    const auto = a.confidence >= thr;
-    dec.innerHTML = auto ? `Your code would <b class="auto">act automatically</b> (confidence ≥ ${thr.toFixed(2)})` : `Your code would <b class="human">send to a person</b> (confidence below ${thr.toFixed(2)})`;
-    q.appendChild(dec);
-    box.appendChild(q);
+
+  // Violations table (criteria at/above the threshold), sorted by probability.
+  const tbody = $("violRows");
+  tbody.innerHTML = "";
+  if (!res.violations.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="4" class="note">No criterion reached the threshold of ${fmtPct(Number($("thresh").value))}. Lower the threshold, or inspect the full ranking below.</td>`;
+    tbody.appendChild(tr);
   }
+  for (const v of res.violations) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><b></b> <span class="note"></span></td><td></td><td></td><td class="num"></td>`;
+    tr.querySelector("b").textContent = v.criterion;
+    tr.querySelector(".note").textContent = v.principle + " ·";
+    tr.children[1].textContent = v.level;
+    tr.children[2].textContent = v.description;
+    tr.children[3].textContent = fmtPct(v.probability);
+    tbody.appendChild(tr);
+  }
+
+  // Full ranking of all 63 criteria, top 12 by probability.
+  const box = $("ranking");
+  box.innerHTML = "";
+  for (const c of res.criteria.slice(0, 12)) {
+    box.appendChild(barRow(`${c.criterion} · ${c.description}`, `Level ${c.level} · ${c.principle}`, c.probability, c.violation));
+  }
+
+  $("raw").textContent = JSON.stringify(res, null, 2);
 }
 
 async function run() {
-  if (!laya) return;
-  let state, questions;
-  const raw = $("state").value.trim();
-  try { state = raw.startsWith("{") || raw.startsWith("[") ? JSON.parse(raw) : $("state").value; } catch { state = $("state").value; }
-  try { questions = JSON.parse($("questions").value); } catch (e) { setStatus("Questions is not valid JSON: " + e.message, "warn"); return; }
+  if (!wcag) return;
+  const text = $("state").value;
+  if (!text.trim()) { setStatus("Paste some HTML first.", "warn"); return; }
   $("runBtn").disabled = true;
-  try { render(await laya.systemOne(state, questions)); setStatus("Done."); }
+  try { render(await wcag.systemOne(text, { threshold: Number($("thresh").value) })); setStatus("Done."); }
   catch (e) { console.error(e); setStatus("Run failed: " + (e?.message || e), "warn"); }
   finally { $("runBtn").disabled = false; }
 }
 
-async function verify() {
-  if (!laya) return;
-  $("verifyBtn").disabled = true; $("verifyOut").textContent = "Running…";
-  try {
-    const ref = await fetch("./reference.json").then((r) => r.json());
-    let rows = "", worst = 0, agree = 0, total = 0;
-    for (const c of ref) {
-      const res = await laya.systemOne(c.state, c.questions);
-      for (const [qid, a] of Object.entries(res.answers)) {
-        const r = c.answers[qid];
-        let dp, headRef, headNow, same;
-        if (a.type === "noul") { dp = Math.abs(a.noul - r.noul); headRef = r.noul.toFixed(3); headNow = a.noul.toFixed(3); same = (a.noul >= 0.5) === (r.noul >= 0.5); }
-        else { const ks = Object.keys(a.probabilities); dp = Math.max(...ks.map((k) => Math.abs(a.probabilities[k] - r.probabilities[k])));
-          const top = (o) => Object.entries(o.probabilities).sort((x, y) => y[1] - x[1])[0][0];
-          headRef = a.type === "choice" ? top(r) : r.score.toFixed(2); headNow = a.type === "choice" ? top(a) : a.score.toFixed(2); same = top(a) === top(r); }
-        worst = Math.max(worst, dp); total++; agree += same ? 1 : 0;
-        rows += `<tr><td>${c.name}</td><td>${qid}</td><td>${headRef}</td><td>${headNow}</td><td class="num">${dp.toFixed(3)}</td><td>${same ? "same" : "<b class='warn'>differs</b>"}</td></tr>`;
-      }
-    }
-    $("verifyOut").innerHTML = `<p><b>${agree}/${total}</b> answers pick the same top option as the original; largest probability difference <b>${worst.toFixed(3)}</b>.</p><table><thead><tr><th>Case</th><th>Question</th><th>Original</th><th>This build</th><th>Max |Δp|</th><th>Top answer</th></tr></thead><tbody>${rows}</tbody></table>`;
-    window.__verify = { agree, total, worst };
-  } catch (e) { $("verifyOut").textContent = "Comparison failed: " + (e?.message || e); }
-  finally { $("verifyBtn").disabled = false; }
-}
-
-async function resolveBaseDir(key) {
-  const b = BASES[key];
-  let dir = new URLSearchParams(location.search).get(b.param);
-  if (!dir) { try { const c = await fetch("./site-config.json"); if (c.ok) dir = (await c.json())[b.configKey]; } catch { /* no config: model sits next to the page */ } }
-  return (dir || b.dir).replace(/\/?$/, "/");
-}
-
-async function probeBase(key) {
-  const dir = await resolveBaseDir(key);
-  try {
-    const r = await fetch(dir + "manifest.json");
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return { key, dir, manifest: await r.json() };
-  } catch (e) {
-    return { key, dir, manifest: null, error: e };
-  }
-}
-
-let AVAILABLE = {};
-function applyBase(key) {
-  BASE_KEY = key;
-  const a = AVAILABLE[key];
-  MODEL_DIR = a.dir; MANIFEST = a.manifest;
-  const vsel = $("variant"); vsel.innerHTML = "";
-  for (const [k, v] of Object.entries(MANIFEST.variants)) vsel.add(new Option(`${v.label} (~${Math.round(v.data.size / 1048576)} MB)`, k));
-  laya = null; $("runBtn").disabled = true; $("verifyBtn").disabled = true; $("loadBtn").disabled = false; $("badges").innerHTML = "";
-  setStatus(`${BASES[key].label} selected. Not loaded yet. Loading downloads the model files from this site (a few hundred MB, once per visit).`);
-}
-
-// Both base checkpoints are probed at startup; a base that has no reachable manifest.json is simply
-// left out of the dropdown instead of failing the page (this is how the typed-decisions checkpoint
-// stays fully optional -- see prepare_site.mjs and the README).
-async function initManifests() {
-  const probes = await Promise.all(Object.keys(BASES).map(probeBase));
-  const sel = $("baseModel"); sel.innerHTML = "";
-  for (const p of probes) if (p.manifest) { AVAILABLE[p.key] = p; sel.add(new Option(BASES[p.key].label, p.key)); }
-  if (!Object.keys(AVAILABLE).length) {
-    const first = probes[0];
-    setStatus("No model found next to this page (" + (first.error?.message || first.error) + "). Build it first, see the README.", "warn");
-    return;
-  }
-  $("baseModelRow").style.display = Object.keys(AVAILABLE).length > 1 ? "" : "none";
-  applyBase(Object.keys(AVAILABLE)[0]);
-}
-$("loadBtn").disabled = true;
-$("baseModel").addEventListener("change", () => applyBase($("baseModel").value));
-initManifests();
-
 // wiring
-for (const k of Object.keys(PRESETS)) $("preset").add(new Option(k, k));
-function applyPreset() {
-  const p = PRESETS[$("preset").value];
-  $("state").value = typeof p.state === "string" ? p.state : JSON.stringify(p.state, null, 2);
-  $("questions").value = JSON.stringify(p.questions, null, 2);
-}
-$("preset").addEventListener("change", applyPreset); applyPreset();
+for (const k of Object.keys(EXAMPLES)) $("example").add(new Option(k, k));
+function applyExample() { $("state").value = EXAMPLES[$("example").value]; }
+$("example").addEventListener("change", applyExample);
 $("thresh").addEventListener("input", () => { $("threshVal").textContent = Number($("thresh").value).toFixed(2); if (lastResult) render(lastResult); });
 $("loadBtn").addEventListener("click", loadModel);
 $("runBtn").addEventListener("click", run);
-$("verifyBtn").addEventListener("click", verify);
 document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run(); });
-window.__laya = { loadModel, run, verify, get ready() { return !!laya; }, get instance() { return laya; } };
+applyExample();
+window.__wcag = { loadModel, run, get ready() { return !!wcag; }, get instance() { return wcag; } };
