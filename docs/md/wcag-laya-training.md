@@ -1,7 +1,7 @@
 ---
 title: "Train Laya WCAG 2.2 Violation Detector with Unsloth on Kaggle"
 published: 2026-10-09
-description: "Train a Laya System 1 decision model to detect WCAG 2.2 violations from HTML snippets using Unsloth's FastDecisionModel on Kaggle free T4×2 GPUs. Convert to ONNX and publish to turbolego/layaForWeb."
+description: "Train a Laya System 1 decision model to detect WCAG 2.2 violations from HTML snippets using Unsloth's FastDecisionModel on Kaggle free T4×2 GPUs. Convert to ONNX and publish to turbolego/LayaWCAG."
 tags:
   - laya
   - wcag
@@ -14,7 +14,7 @@ tags:
 
 ## Context
 
-- **Source repo**: `turbolego/layaForWeb` (GitHub fork at `/media/kloa/.../repos/turbolego-layaForWeb`)
+- **Source repo**: `turbolego/LayaWCAG` (GitHub fork at `/media/kloa/.../repos/turbolego-layaForWeb`)
 - **Base model**: `convaiinnovations/laya` (421M params, ModernBERT-large backbone + decision head)
 - **Training method**: Unsloth's `FastDecisionModel` with LoRA (r=16) for decision model fine-tuning
 - **Platform**: Kaggle free T4×2 (2x Tesla T4) via Unsloth notebooks

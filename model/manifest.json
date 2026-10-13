@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "source": "turbolego/layaForWeb",
+  "source": "turbolego/LayaWCAG",
   "chunk_bytes": 25165824,
   "variants": {
     "wcag": {

@@ -174,7 +174,7 @@ Include the ONNX model in your HTML:
 
 ## Related
 
-- [layaForWeb](https://github.com/turbolego/layaForWeb) - Browser deployment of Laya models
+- [layaForWeb](https://github.com/turbolego/LayaWCAG) - Browser deployment of Laya models
 - [AI-WCAG-Gauntlet](https://github.com/turbolego/AI-WCAG-Gauntlet) - WCAG 2.2 benchmark
 - [Axe-core](https://github.com/dequelabs/axe-core) - Accessibility testing engine
 - [WCAG 2.2 Spec](https://www.w3.org/TR/WCAG22/) - Official specification

@@ -1,6 +1,6 @@
 # Plan: Re-train Laya Model for WCAG 2.2 Violation Detection
 
-**Repository:** https://github.com/turbolego/layaForWeb
+**Repository:** https://github.com/turbolego/LayaWCAG
 **Goal:** Fine-tune the Laya model to classify web accessibility violations per WCAG 2.2 criteria, deploy via Kaggle, and publish the resulting model to the layaForWeb repository.
 
 ---

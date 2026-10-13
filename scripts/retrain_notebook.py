@@ -294,7 +294,7 @@ shutil.copy("laya-wcag.onnx", os.path.join(OUT, "laya-wcag.onnx"))
 
 manifest = {
     "version": 1,
-    "source": "turbolego/layaForWeb",
+    "source": "turbolego/LayaWCAG",
     "chunk_bytes": CHUNK,
     "variants": {
         "wcag": {
