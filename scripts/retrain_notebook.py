@@ -247,6 +247,31 @@ vi = m.graph.value_info
 keep_vi = [v for v in vi if v.name not in {i.name for i in m.graph.initializer}]
 del vi[:]
 vi.extend(keep_vi)
+
+# ORT WebGPU's SkipLayerNormalization kernel requires an explicit 1-D Beta.
+# This checkpoint has no LayerNormalization bias, so add a zero vector without
+# changing the model's output; residual fusion can then carry the expected shape.
+init_names = {i.name for i in m.graph.initializer}
+n_beta = 0
+for node in m.graph.node:
+    if node.op_type != "LayerNormalization":
+        continue
+    if len(node.input) > 2 and node.input[2]:
+        continue
+    scale = next(i for i in m.graph.initializer if i.name == node.input[1])
+    beta_name = f"layernorm_beta_1d_{n_beta}"
+    while beta_name in init_names:
+        n_beta += 1
+        beta_name = f"layernorm_beta_1d_{n_beta}"
+    width = scale.dims[-1]
+    m.graph.initializer.append(onnx.helper.make_tensor(
+        beta_name, onnx.TensorProto.FLOAT, [width], [0.0] * width
+    ))
+    node.input.append(beta_name)
+    init_names.add(beta_name)
+    n_beta += 1
+print(f"added {n_beta} explicit 1-D zero Beta tensors")
+
 onnx.save(m, "laya-wcag-clean.onnx")
 print(f"cleaned {n_split} Split nodes; saved laya-wcag-clean.onnx")
 onnx.checker.check_model(onnx.load("laya-wcag-clean.onnx"))
