@@ -24,7 +24,7 @@ The model sees **markup text only** — no CSS cascade beyond inline styles, no 
 | | |
 |---|---|
 | Base encoder | ModernBERT-large (421M parameters), **frozen** during fine-tuning |
-| Head | `Linear(1024, 63)` multi-label classifier on the `[CLS]` pooled token |
+| Head | `Linear(1024, 63)` multi-label classifier on the `[CLS]` pooled token + a small MLP baked in as an additive correction on the 1.4.3 column only |
 | Output | `criterion_scores` → `[batch, 63]` logits; sigmoid applied in the browser |
 | Loss | `BCEWithLogitsLoss` with per-criterion `pos_weight` (clamped to 50) against class imbalance |
 | Input | `input_ids` + `attention_mask`, up to 256 tokens |
@@ -71,6 +71,17 @@ Per-criterion positive counts in train: 2.4.7 Focus Visible 1,230 · 1.4.3 Contr
 
 Trained on a Kaggle T4 (kernel `hummern/laya-wcag-2-2-retrain-v6`): batch size 16, learning rate 2e-4, `MAX_LEN` 256, up to 15 epochs with early stopping on validation macro-F1 (patience 5). Best validation macro-F1 **0.0826** at epoch 13. `scripts/retrain_notebook.py` regenerates the Kaggle notebook from these settings.
 
+### Contrast (1.4.3) fine-tune
+
+v6 got 1.4.3 backwards — good-contrast text scored *higher* than low-contrast text, so no threshold could separate them. A full retrain traded the working criteria against each other, so only that one column was retrained: precompute the frozen encoder's `[CLS]` embeddings once, train a `Linear(1024,128) → GELU → Dropout → Linear(128,1)` head initialized from the deployed linear row, then bake the MLP into the ONNX graph as an additive correction masked to column 14. The other 62 criteria are provably untouched (verified only column 14 moves in the graph).
+
+| 1.4.3 Contrast | before | after |
+|---|---|---|
+| AUC (1,615 held-out rows) | 0.629 | **0.933** |
+| Best F1 | 0.450 | **0.779** |
+
+In the browser, per-criterion thresholds (`web/laya-wcag-core.js`) raise the contrast criteria (1.4.3 / 1.4.6 / 1.4.11) to **0.7** to suppress residual over-fire without retraining.
+
 ## Results
 
 Measured on the held-out validation set (1,515 rows). "Gap" is mean violation probability on violating rows minus mean on clean rows — a positive gap means the model ranks real violations above clean markup. Per-criterion F1 is at a 0.5 threshold.
@@ -84,7 +95,7 @@ Measured on the held-out validation set (1,515 rows). "Gap" is mean violation pr
 | 2.4.7 | Focus Visible | +0.216 | 0.421 |
 | 1.1.1 | Non-text Content | +0.197 | 0.323 |
 | 2.4.4 | Link Purpose (In Context) | +0.160 | 0.190 |
-| 1.4.3 | Contrast (Minimum) | +0.122 | 0.446 |
+| 1.4.3 | Contrast (Minimum) | +0.122 | 0.446 (best F1 **0.779** / AUC **0.933** after the column-14 fine-tune) |
 
 - **Micro-F1 @0.5: 0.432**
 - **Macro-F1 @0.5: 0.060** — low only because 52 of 63 criteria have no positive example and contribute zero; the criteria that have data discriminate clearly.
@@ -95,11 +106,11 @@ The previous model (trained on ~110 hand-written/jsdom rows) was effectively unt
 
 | Example | Criteria flagged (of 63) |
 |---|---|
-| Clean semantic page | 19 → **3** |
+| Clean semantic page | 19 → **3** (fp32/ORT: **0**) |
 | Low-contrast text → 1.4.3 score | dead → **0.90** |
 | Image without alt → 1.1.1 score | ~0.34 → **0.73** |
 
-This was the first build where any criterion clearly worked. Micro-F1 went from ~0 to 0.43.
+This was the first build where any criterion clearly worked. Micro-F1 went from ~0 to 0.43. In-browser (onnxruntime-web, wasm + int8) the clean page can show 1–2 flags from other criteria (4.1.2, 2.4.4) sitting at 0.43–0.49 that cross 0.5 only from wasm rounding.
 
 ## Packaging
 
@@ -114,7 +125,7 @@ The browser caches the parts in Cache Storage keyed by the file hash, so repeat 
 Read these before trusting any output:
 
 - **52 of 63 criteria have no training data.** Media (1.2.x captions/audio-description), timing (2.2.1), sensory characteristics (1.3.3), reflow (1.4.10), target size (2.5.8) and others need real media, JavaScript, or pointer hit-testing the crawler does not exercise. Their columns are untrained and their probabilities are meaningless.
-- **Contrast (1.4.3) over-fires.** It reads inline color styles but does not fully separate passing from failing pairs — good-contrast text also scores ~0.90. It needs more contrast *variety* in the corpus, not more volume of the same pairs.
+- **Contrast (1.4.3) over-fires at the default 0.5 threshold.** It reads inline color styles but does not fully separate passing from failing pairs — good-contrast text also scores high. The deployed model carries a column-14 MLP correction (AUC 0.933, F1 0.779 on held-out rows), and the browser runtime raises the threshold for 1.4.3 / 1.4.6 / 1.4.11 to **0.7** (`web/laya-wcag-core.js`) to suppress residual false positives. It still needs more contrast *variety* in the corpus, not more volume of the same pairs.
 - **Macro-F1 is low** (0.060) purely because of the empty columns; do not read it as "the working criteria are bad."
 - The model is a **research demo, not a WCAG conformance tool.** Always pair it with axe-core or the IBM checker for real audits.
 
