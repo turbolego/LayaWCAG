@@ -99,6 +99,15 @@
         <button id="fetchBtn" class="secondary">Fetch & Check</button>
       </div>
     </div>
+    <div class="row" style="margin-top:12px">
+      <div style="flex:1">
+        <label for="urlList">Batch URLs — one per line (Laya gates axe-core per page)</label>
+        <textarea id="urlList" rows="4" spellcheck="false" placeholder="https://example.com/page1&#10;https://example.com/page2&#10;..."></textarea>
+      </div>
+      <div style="align-self:end">
+        <button id="batchBtn" class="secondary" disabled>Run batch</button>
+      </div>
+    </div>
     <label for="state">HTML snippet</label>
     <textarea id="state" rows="10" spellcheck="false"></textarea>
     <p class="note" style="margin-top:8px">The model sees markup text only — no CSS, no rendered layout, no assistive-technology simulation. Checks that need computed styles (contrast, reflow, target size) or behaviour (keyboard traps, focus order) are inherently out of reach here. The classifier was fine-tuned on a small dataset and its recall is weak: treat its output as a hint, never as a conformance verdict. Pair it with <a href="https://github.com/dequelabs/axe-core" target="_blank" rel="noopener">axe-core</a> for rule-based checks.</p>
@@ -117,6 +126,9 @@
       <tbody id="violRows"></tbody>
     </table>
     <details><summary>axe-core results</summary><div id="axeResults" style="margin-top:8px"></div></details>
+    <details id="batchCard" style="display:none"><summary>Batch results (<span id="batchCount">0</span> URLs)</summary>
+      <div id="batchResults" style="margin-top:8px"></div>
+    </details>
     <details><summary>Full ranking (top 12 of 63 criteria)</summary><div id="ranking" style="margin-top:8px"></div></details>
     <details><summary>Raw JSON</summary><pre id="raw"></pre></details>
   </section>

@@ -121,6 +121,7 @@ async function loadModel() {
     badge("WCAG 2.2 · 63 criteria");
     badge("cross-origin isolated: " + (self.crossOriginIsolated ? "yes" : "no"));
     $("runBtn").disabled = false;
+    $("batchBtn").disabled = false;
   } catch (e) {
     console.error(e); setStatus("Could not load the model: " + (e?.message || e), "warn");
   } finally { setProgress(null); $("loadBtn").disabled = false; }
@@ -243,6 +244,65 @@ async function fetchAndCheck() {
   } finally { $("fetchBtn").disabled = false; }
 }
 
+// Batch: fetch each URL, run Laya, and only run axe-core on pages where a
+// criterion reaches the slider threshold. Renders a per-URL summary table.
+async function runBatch() {
+  if (!wcag) { setStatus("Load the model first.", "warn"); return; }
+  const urls = $("urlList").value.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  if (!urls.length) { setStatus("Enter at least one URL in the batch list.", "warn"); return; }
+  const threshold = Number($("thresh").value);
+  $("batchBtn").disabled = true; $("runBtn").disabled = true; $("fetchBtn").disabled = true;
+  $("batchCard").style.display = "block";
+  $("batchResults").innerHTML = "";
+  const tbl = document.createElement("table");
+  tbl.innerHTML = `<thead><tr><th>#</th><th>URL</th><th class="num">max P</th><th>criteria ≥ ${threshold.toFixed(2)}</th><th>axe-core</th><th>status</th></tr></thead><tbody></tbody>`;
+  const tb = tbl.querySelector("tbody");
+  $("batchResults").appendChild(tbl);
+  $("batchCount").textContent = String(urls.length);
+  let axeRuns = 0;
+  for (let i = 0; i < urls.length; i++) {
+    let full = urls[i];
+    if (!/^https?:\/\//i.test(full)) full = "https://" + full;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="num">${i + 1}</td><td style="word-break:break-all"></td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td></td>`;
+    tr.children[1].textContent = full;
+    tb.appendChild(tr);
+    setStatus(`Batch ${i + 1}/${urls.length}: fetching ${full} …`);
+    try {
+      const res = await fetch(full, { mode: "cors" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const html = await res.text();
+      const r = await wcag.systemOne(html, { threshold });
+      const maxP = Math.max(...r.criteria.map(c => c.probability));
+      const flagged = r.violations.filter(v => v.probability >= threshold);
+      tr.children[2].textContent = fmtPct(maxP);
+      tr.children[3].textContent = String(flagged.length);
+      if (flagged.length) {
+        tr.children[4].textContent = "running…";
+        try {
+          const axeResult = await runAxe(html);
+          axeRuns++;
+          tr.children[4].textContent = String(axeResult.violations.length) + " rule(s)";
+          tr.children[4].title = axeResult.violations.map(v => v.id).join(", ");
+        } catch (e) {
+          tr.children[4].textContent = "error";
+          tr.children[4].title = e?.message || String(e);
+        }
+      } else {
+        tr.children[4].textContent = "skipped";
+        tr.children[4].title = "No criterion reached the flag threshold — axe-core not run";
+      }
+      tr.children[5].textContent = `${r.latency_ms.toFixed(0)} ms`;
+    } catch (e) {
+      console.error(e);
+      tr.children[5].textContent = "fetch failed: " + (e?.message || e);
+      tr.children[5].style.color = "var(--warn)";
+    }
+  }
+  setStatus(`Batch done: ${urls.length} URLs, axe-core ran on ${axeRuns}.`, "");
+  $("batchBtn").disabled = false; $("runBtn").disabled = false; $("fetchBtn").disabled = false;
+}
+
 async function run() {
   if (!wcag) return;
   const text = $("state").value;
@@ -282,6 +342,7 @@ $("thresh").addEventListener("input", () => { $("threshVal").textContent = Numbe
 $("loadBtn").addEventListener("click", loadModel);
 $("runBtn").addEventListener("click", run);
 $("fetchBtn").addEventListener("click", fetchAndCheck);
+$("batchBtn").addEventListener("click", runBatch);
 document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run(); });
 applyExample();
 window.__wcag = { loadModel, run, get ready() { return !!wcag; }, get instance() { return wcag; } };
