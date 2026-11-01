@@ -3,6 +3,7 @@
 **A WCAG 2.2 accessibility violation detector that runs entirely in your browser.** Paste an HTML snippet, get a violation probability for each of the 63 WCAG 2.2 success criteria, in a single forward pass, on the visitor's device. No server, no API key, no data leaves the page.
 
 **Live demo:** https://turbolego.github.io/LayaWCAG/
+**Model on Hugging Face:** https://huggingface.co/Turbolego/laya-wcag
 
 Built on the [Laya](https://huggingface.co/convaiinnovations/laya) ModernBERT-large encoder (Apache-2.0), fine-tuned for WCAG 2.2 detection, converted to ONNX, quantized to int8, and split into browser-sized parts for ONNX Runtime Web.
 
