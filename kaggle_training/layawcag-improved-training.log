@@ -1,0 +1,55 @@
+[{"stream_name":"stderr","time":5.570210499,"data":"/usr/local/lib/python3.13/dist-packages/nbformat/validator.py:434: MissingIDFieldWarning: Cell is missing an id field, this will become a hard error in future nbformat versions. You may want to use `normalize()` on your notebooks before validations (available since nbformat 5.1.4). Previous versions of nbformat are fixing this issue transparently, and will stop doing so in the future.\n"}
+,{"stream_name":"stderr","time":5.570264064,"data":"  _validate(nbdict, ref, version, version_minor, relax_add_props)\n"}
+,{"stream_name":"stderr","time":6.367136161,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":6.367171803,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":6.367175625,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":6.367178164,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stderr","time":6.959471498,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":6.959508595,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":6.959512077,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":6.959514594,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stdout","time":42.124775688,"data":"Using device: cuda\n"}
+,{"stream_name":"stdout","time":42.150553553,"data":"Defined 73 WCAG 2.2 criteria\n"}
+,{"stream_name":"stderr","time":42.626481043,"data":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n"}
+,{"stream_name":"stderr","time":42.626510925,"data":"\n"}
+,{"stream_name":"stderr","time":42.626515949,"data":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n"}
+,{"stream_name":"stdout","time":51.285926011,"data":"Model parameters: 421,293,827\n"}
+,{"stream_name":"stdout","time":51.285966908,"data":"Hidden size: 1024\n"}
+,{"stream_name":"stdout","time":51.308889482,"data":"Model initialized; trainable: 26,586,956 / total: 421,368,652\n"}
+,{"stream_name":"stdout","time":51.4869912,"data":"=== /kaggle/input tree ===\n"}
+,{"stream_name":"stdout","time":51.871102856,"data":"  /kaggle/input/datasets/hummern/laya-wcag-data/train_final.jsonl\n"}
+,{"stream_name":"stdout","time":51.871140887,"data":"  /kaggle/input/datasets/hummern/laya-wcag-data/val_final.jsonl\n"}
+,{"stream_name":"stdout","time":51.871144949,"data":"Data dir: /kaggle/input/datasets/hummern/laya-wcag-data\n"}
+,{"stream_name":"stdout","time":52.730160377,"data":"Train: 6367 (train_final.jsonl), Val: 1687 (val_final.jsonl)\n"}
+,{"stream_name":"stderr","time":56.544548295,"data":"Traceback (most recent call last):\n"}
+,{"stream_name":"stderr","time":56.545322053,"data":"  File \"\u003cstring\u003e\", line 1, in \u003cmodule\u003e\n"}
+,{"stream_name":"stderr","time":56.545341694,"data":"    import sys;import papermill as pm;pm.execute_notebook(\"__notebook__.ipynb\",\"__notebook__.ipynb\",progress_bar=False,log_output=True,stdout_file=sys.stdout,stderr_file=sys.stderr,allow_errors=False,timeout=43200)\n"}
+,{"stream_name":"stderr","time":56.545350075,"data":"                                      ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"}
+,{"stream_name":"stderr","time":56.545368972,"data":"  File \"/usr/local/lib/python3.13/dist-packages/papermill/execute.py\", line 131, in execute_notebook\n"}
+,{"stream_name":"stderr","time":56.545374051,"data":"    raise_for_execution_errors(nb, output_path)\n"}
+,{"stream_name":"stderr","time":56.545377715,"data":"    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^\n"}
+,{"stream_name":"stderr","time":56.545381299,"data":"  File \"/usr/local/lib/python3.13/dist-packages/papermill/execute.py\", line 251, in raise_for_execution_errors\n"}
+,{"stream_name":"stderr","time":56.545385199,"data":"    raise error\n"}
+,{"stream_name":"stderr","time":56.54538868,"data":"papermill.exceptions.PapermillExecutionError: \n"}
+,{"stream_name":"stderr","time":56.545392237,"data":"---------------------------------------------------------------------------\n"}
+,{"stream_name":"stderr","time":56.545395907,"data":"Exception encountered at \"In [7]\":\n"}
+,{"stream_name":"stderr","time":56.545401463,"data":"---------------------------------------------------------------------------\n"}
+,{"stream_name":"stderr","time":56.545410012,"data":"IndexError                                Traceback (most recent call last)\n"}
+,{"stream_name":"stderr","time":56.545413663,"data":"/tmp/ipykernel_25/1318559052.py in \u003ccell line: 0\u003e()\n"}
+,{"stream_name":"stderr","time":56.545417511,"data":"     71 neg_counts = len(train_rows) - pos_counts\n"}
+,{"stream_name":"stderr","time":56.545419896,"data":"     72 pos_weight = torch.tensor([\n"}
+,{"stream_name":"stderr","time":56.545422423,"data":"---\u003e 73     (neg_counts[i] / pos_counts[i]) if pos_counts[i] \u003e 0 else 1.0\n"}
+,{"stream_name":"stderr","time":56.545424983,"data":"     74     for i in range(num_criteria)\n"}
+,{"stream_name":"stderr","time":56.545427305,"data":"     75 ], dtype=torch.float32).clamp(max=50.0)\n"}
+,{"stream_name":"stderr","time":56.545429687,"data":"\n"}
+,{"stream_name":"stderr","time":56.545432057,"data":"IndexError: index 63 is out of bounds for axis 0 with size 63\n"}
+,{"stream_name":"stderr","time":56.545434515,"data":"\n"}
+,{"stream_name":"stderr","time":58.765676875,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":58.765729709,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":58.924523891,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":58.92455435,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":59.693257266,"data":"[NbConvertApp] Converting notebook __notebook__.ipynb to notebook\n"}
+,{"stream_name":"stderr","time":59.783711957,"data":"[NbConvertApp] Writing 75912 bytes to __notebook__.ipynb\n"}
+,{"stream_name":"stderr","time":62.506067801,"data":"[NbConvertApp] Converting notebook __notebook__.ipynb to html\n"}
+,{"stream_name":"stderr","time":63.141586866,"data":"[NbConvertApp] Writing 434661 bytes to __results__.html\n"}
+]

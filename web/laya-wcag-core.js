@@ -7,6 +7,16 @@
 
 const CRITERIA_URL = "./wcag_criteria.json";
 
+// Per-criterion threshold overrides. The single global threshold (0.5) makes
+// the contrast criteria (1.4.3/1.4.6/1.4.11) fire too often in practice.
+// Raising their threshold suppresses contrast over-fire without retraining.
+// A caller can still override per-criterion thresholds via options.thresholds.
+const DEFAULT_PER_CRITERION_THRESHOLDS = {
+  "1.4.3": 0.7,  // Contrast (Minimum) — over-fires; require higher confidence
+  "1.4.6": 0.7,  // Contrast (Enhanced)
+  "1.4.11": 0.7, // Non-text Contrast
+};
+
 // Encode a single HTML snippet: [CLS] tokens [SEP], padded to max_len.
 export function buildWcagSequence(tok, sp, text, maxLen = 512) {
   const enc = Array.from(tok.encode(text, { add_special_tokens: false }).ids);
@@ -34,11 +44,20 @@ export class WcagLaya {
     this.sp = specialIdsWcag(tokenizer);
   }
 
+  // Per-criterion threshold for a given criterion id.
+  // Priority: options.thresholds (per-criterion) > DEFAULT_PER_CRITERION_THRESHOLDS > options.threshold > 0.5.
+  _thresholdFor(criterionId, base, overrides) {
+    if (overrides && overrides[criterionId] != null) return overrides[criterionId];
+    if (DEFAULT_PER_CRITERION_THRESHOLDS[criterionId] != null) return DEFAULT_PER_CRITERION_THRESHOLDS[criterionId];
+    return base;
+  }
+
   // Evaluate one HTML snippet against all 63 WCAG 2.2 criteria.
   // Returns { criteria: [{criterion, level, description, violation, probability}], violations: [...], latency_ms }
   async systemOne(state, options = {}) {
     const maxLen = options.maxLen ?? 512;
     const threshold = options.threshold ?? 0.5;
+    const thresholds = options.thresholds; // optional per-criterion overrides
     const text = typeof state === "string" ? state : JSON.stringify(state);
     const seq = buildWcagSequence(this.tok, this.sp, text, maxLen);
     const b = collateOne(seq, this.sp.pad);
@@ -54,7 +73,8 @@ export class WcagLaya {
     const violations = [];
     this.criteria.forEach((c, i) => {
       const p = sigmoid(logits[i]);
-      const violation = p >= threshold;
+      const thr = this._thresholdFor(c.criterion, threshold, thresholds);
+      const violation = p >= thr;
       const entry = {
         criterion: c.criterion,
         principle: c.principle,
@@ -75,6 +95,7 @@ export class WcagLaya {
   async systemBatch(states, options = {}) {
     const maxLen = options.maxLen ?? 512;
     const threshold = options.threshold ?? 0.5;
+    const thresholds = options.thresholds; // optional per-criterion overrides
     const seqs = states.map((s) => buildWcagSequence(this.tok, this.sp, typeof s === "string" ? s : JSON.stringify(s), maxLen));
     const n = seqs.length;
     const L = Math.max(...seqs.map((s) => s.length));
@@ -99,7 +120,8 @@ export class WcagLaya {
       const violations = [];
       this.criteria.forEach((c, i) => {
         const p = sigmoid(logits[r * this.criteria.length + i]);
-        const violation = p >= threshold;
+        const thr = this._thresholdFor(c.criterion, threshold, thresholds);
+        const violation = p >= thr;
         const entry = { criterion: c.criterion, principle: c.principle, level: c.level, description: c.description, violation, probability: r4(p) };
         results.push(entry);
         if (violation) violations.push(entry);

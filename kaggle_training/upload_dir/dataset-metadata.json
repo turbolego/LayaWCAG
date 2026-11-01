@@ -1,0 +1,7 @@
+{
+  "id": "hummern/laya-wcag-data-63",
+  "title": "LayaWCAG 63 Criteria Merged Training Data (real+synthetic)",
+  "description": "Merged 63-criterion WCAG 2.2 corpus for Laya fine-tuning. 9093 train + 2161 val rows. Combines 6367 real IBM Equal Access Checker HTML snippets (11 criteria with real positives, gives micro-F1~0.43) with 2726 synthetic HTML examples covering all 63 criteria, plus clean high-contrast no-violation examples to counter 1.4.3/1.4.11 contrast over-fire. Each row: {state: HTML string, labels: [0|1 x 63]} position-aligned to the 63-criterion model head.",
+  "licenses": [{"name": "Apache 2.0"}],
+  "keywords": ["accessibility", "wcag", "laya", "training-data"]
+}

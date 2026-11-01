@@ -143,6 +143,9 @@ function render(res) {
   $("sLatency").textContent = res.latency_ms.toFixed(0);
   $("sViolations").textContent = String(res.violations.length);
   $("sBackend").textContent = backendUsed === "webgpu" ? "WebGPU" : "WASM";
+  $("sAxe").textContent = res.axeViolations == null ? "skipped" : String(res.axeViolations);
+  if (res.axeViolations == null) $("sAxe").parentElement.title = "axe-core ran only because a criterion reached the flag threshold";
+  else $("sAxe").parentElement.title = "";
 
   // Violations table (criteria at/above the threshold), sorted by probability.
   const tbody = $("violRows");
@@ -171,6 +174,73 @@ function render(res) {
   }
 
   $("raw").textContent = JSON.stringify(res, null, 2);
+  renderAxeResults(res.axeViolations === null ? null : (res.axeResults || { error: res.axeError }));
+}
+
+// Run axe-core against the provided HTML by injecting it into an off-screen
+// container in the main document (axe must run in the same document it was
+// loaded in), then removing the container.
+function runAxe(html) {
+  return new Promise((resolve, reject) => {
+    if (typeof window.axe === "undefined") return reject(new Error("axe-core not loaded"));
+    const container = document.createElement("div");
+    container.id = "laya-axe-audit";
+    container.style.cssText = "position:absolute;left:-9999px;top:0;width:800px;visibility:hidden;";
+    container.innerHTML = html;
+    document.body.appendChild(container);
+    setTimeout(() => {
+      window.axe.run("#laya-axe-audit", { resultTypes: ["violations"] })
+        .then((results) => { container.remove(); resolve(results); })
+        .catch((e) => { container.remove(); reject(e); });
+    }, 80);
+  });
+}
+
+function renderAxeResults(axeResults) {
+  const box = $("axeResults");
+  box.innerHTML = "";
+  if (!axeResults) { box.innerHTML = '<p class="note">axe-core was not run (no criterion reached the flag threshold).</p>'; return; }
+  if (axeResults.error) { box.innerHTML = `<p class="warn">axe-core error: ${axeResults.error}</p>`; return; }
+  const v = axeResults.violations || [];
+  if (!v.length) { box.innerHTML = '<p style="color:var(--good)">axe-core: 0 violations 🎉</p>'; return; }
+  const tbl = document.createElement("table");
+  tbl.innerHTML = `<thead><tr><th>Rule</th><th>Impact</th><th>Description</th><th class="num">Nodes</th></tr></thead><tbody></tbody>`;
+  const tb = tbl.querySelector("tbody");
+  for (const viol of v) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><code></code></td><td></td><td></td><td class="num"></td>`;
+    tr.querySelector("code").textContent = viol.id;
+    tr.children[1].textContent = viol.impact || "";
+    tr.children[2].textContent = viol.help || viol.description || "";
+    tr.children[3].textContent = String(viol.nodes ? viol.nodes.length : 0);
+    tb.appendChild(tr);
+  }
+  box.appendChild(tbl);
+  const p = document.createElement("p");
+  p.className = "note";
+  p.textContent = `axe-core v${axeResults.axeVersion || "?"} · ${v.length} rule(s) violated · ${axeResults.url || "inline snippet"}`;
+  box.appendChild(p);
+}
+
+async function fetchAndCheck() {
+  const url = $("urlInput").value.trim();
+  if (!url) { setStatus("Enter a URL first.", "warn"); return; }
+  if (!wcag) { setStatus("Load the model first.", "warn"); return; }
+  let full = url;
+  if (!/^https?:\/\//i.test(full)) full = "https://" + full;
+  $("fetchBtn").disabled = true;
+  try {
+    setStatus(`Fetching ${full} … (CORS must allow this origin)`);
+    const res = await fetch(full, { mode: "cors" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    $("state").value = text;
+    setStatus(`Fetched ${text.length} chars from ${full}. Running model…`);
+    await run();
+  } catch (e) {
+    console.error(e);
+    setStatus(`Could not fetch ${full}: ${e?.message || e}. The target must send CORS headers (Access-Control-Allow-Origin). You can also paste its HTML manually.`, "warn");
+  } finally { $("fetchBtn").disabled = false; }
 }
 
 async function run() {
@@ -178,7 +248,28 @@ async function run() {
   const text = $("state").value;
   if (!text.trim()) { setStatus("Paste some HTML first.", "warn"); return; }
   $("runBtn").disabled = true;
-  try { render(await wcag.systemOne(text, { threshold: Number($("thresh").value) })); setStatus("Done."); }
+  try {
+    const res = await wcag.systemOne(text, { threshold: Number($("thresh").value) });
+    // Auto-run axe-core if any criterion reached the flag threshold
+    const threshold = Number($("thresh").value);
+    const triggered = res.violations.some(v => v.probability >= threshold);
+    if (triggered) {
+      setStatus("Criterion threshold met — running axe-core…");
+      try {
+        const axeResult = await runAxe(text);
+        res.axeViolations = axeResult.violations ? axeResult.violations.length : 0;
+        res.axeResults = axeResult;
+      } catch (e) {
+        console.error(e);
+        res.axeViolations = "error";
+        res.axeError = e?.message || String(e);
+      }
+    } else {
+      res.axeViolations = null; // not run
+    }
+    render(res);
+    setStatus("Done.");
+  }
   catch (e) { console.error(e); setStatus("Run failed: " + (e?.message || e), "warn"); }
   finally { $("runBtn").disabled = false; }
 }
@@ -190,6 +281,7 @@ $("example").addEventListener("change", applyExample);
 $("thresh").addEventListener("input", () => { $("threshVal").textContent = Number($("thresh").value).toFixed(2); if (lastResult) render(lastResult); });
 $("loadBtn").addEventListener("click", loadModel);
 $("runBtn").addEventListener("click", run);
+$("fetchBtn").addEventListener("click", fetchAndCheck);
 document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run(); });
 applyExample();
 window.__wcag = { loadModel, run, get ready() { return !!wcag; }, get instance() { return wcag; } };

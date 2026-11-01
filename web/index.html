@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Laya WCAG 2.2 in the browser</title>
 <script src="./coi.js"></script>
+<script src="./axe.min.js"></script>
 <style>
   :root{
     --bg:#f6f5f1; --card:#ffffff; --ink:#1c1b19; --ink2:#5b5850; --line:#e3e0d8;
@@ -77,7 +78,7 @@
   </section>
 
   <section class="card">
-    <h2>2 · Paste HTML to audit</h2>
+    <h2>2 · Paste HTML or fetch a URL</h2>
     <div class="row" style="margin-bottom:12px">
       <div>
         <label for="example">Example snippet</label>
@@ -88,6 +89,15 @@
         <input type="range" id="thresh" min="0.05" max="0.95" step="0.05" value="0.5" style="width:100%">
       </div>
       <div><button id="runBtn" disabled>Run (Ctrl+Enter)</button></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div style="flex:1">
+        <label for="urlInput">Page URL (optional)</label>
+        <input type="url" id="urlInput" placeholder="https://example.com" style="width:100%" autocomplete="url">
+      </div>
+      <div style="align-self:end">
+        <button id="fetchBtn" class="secondary">Fetch & Check</button>
+      </div>
     </div>
     <label for="state">HTML snippet</label>
     <textarea id="state" rows="10" spellcheck="false"></textarea>
@@ -100,11 +110,13 @@
       <div class="stat"><b id="sLatency">–</b><span>model time (ms)</span></div>
       <div class="stat"><b id="sViolations">–</b><span>criteria flagged</span></div>
       <div class="stat"><b id="sBackend">–</b><span>backend</span></div>
+      <div class="stat"><b id="sAxe">–</b><span>axe-core violations</span></div>
     </div>
     <table>
       <thead><tr><th>Criterion</th><th>Level</th><th>Description</th><th style="text-align:right">P(violation)</th></tr></thead>
       <tbody id="violRows"></tbody>
     </table>
+    <details><summary>axe-core results</summary><div id="axeResults" style="margin-top:8px"></div></details>
     <details><summary>Full ranking (top 12 of 63 criteria)</summary><div id="ranking" style="margin-top:8px"></div></details>
     <details><summary>Raw JSON</summary><pre id="raw"></pre></details>
   </section>

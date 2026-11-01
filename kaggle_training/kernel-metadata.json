@@ -1,0 +1,25 @@
+{
+  "id": "hummern/layawcag-improved-training-v2",
+  "title": "LayaWCAG Improved Training v2",
+  "code_file": "laya_wcag_training.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "enable_gpu": "true",
+  "enable_internet": "true",
+  "dataset_sources": [
+    "hummern/laya-wcag-data-63",
+    "hummern/laya-base-english"
+  ],
+  "competition_sources": [],
+  "model_sources": [],
+  "category_ids": [],
+  "subtitles": [],
+  "tags": [
+    "laya",
+    "wcag",
+    "accessibility",
+    "pytorch",
+    "onnx"
+  ],
+  "isPrivate": true
+}
