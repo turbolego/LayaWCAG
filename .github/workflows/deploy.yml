@@ -88,6 +88,11 @@ jobs:
           python -m playwright install --with-deps chromium
           python tests/browser_smoke.py
 
+      - name: Browser smoke test, continuous-learning page (headless Chromium, WASM)
+        env:
+          SMOKE_DIST: dist-test
+        run: python tests/browser_smoke_escalator.py
+
       # Optional: keep the model on Hugging Face instead of inside the Pages site.
       # Set the repository variable HF_MODEL_REPO (for example yourname/laya-en-web) and the secret HF_TOKEN (write access).
       - name: Upload the model to Hugging Face

@@ -157,6 +157,29 @@ python scripts/retrain_notebook.py                 # rewrites notebooks/laya_wca
 
 Pages is configured as the legacy Jekyll branch build (source `main`, path `/`), so the repo tree is served directly and `dist/` is not published. The assembled site — including the vendored ONNX Runtime Web + tokenizers (`vendor/`) and a `.nojekyll` — is committed to the branch. Push to `main` and Pages rebuilds.
 
+## Continuous-learning demo (`escalator.html`)
+
+The second page on the site demonstrates Laya's continuous-learning loop (the shape of
+[laya.Escalator](https://laya.readthedocs.io/en/latest/vegaml.html)) on WCAG 2.2 examples:
+
+- The WASM decision model (same ONNX model as the main demo) scores each candidate criterion;
+  criteria it is not confident about **abstain**, and criteria outside its trained
+  distribution are **unbound** (detected at load time: a criterion that answers every
+  example with p≈0.5 responds to nothing).
+- Uncertain/unbound cases are escalated to a **teacher LLM** — either the built-in
+  simulated teacher (deterministic ground truth for the bundled examples, no key needed) or a
+  live OpenAI-compatible endpoint (hosted Qwen 3.8 27B, OpenRouter, self-hosted vLLM).
+- The teacher's verdict is **learned in-browser**: `escalator.js` keeps a small per-criterion
+  logistic delta head over 10 example-signature features (img without alt, missing label,
+  heading skip, …), re-fit after every escalation and persisted in localStorage — the
+  browser-sized stand-in for Laya's on-device Learner.
+- "Auto-run all" walks the 8 WCAG 2.2 examples and records a round on the decay chart:
+  round 1 needs several teacher calls, round 2 (after the delta head absorbed the verdicts)
+  needs ~0 — the LLM usage the demo is built to show going away.
+
+The live-teacher key is stored only in the browser's localStorage; the endpoint is called
+directly from the page, so its CORS policy must allow the site's origin.
+
 ## The general decision model (still in the repo)
 
 Before the WCAG fine-tune, this repo ported Laya's general **typed-decision** model to the browser: given text and typed questions (`choice` / `score` / `yes-no`), it returns calibrated probabilities and confidence in one pass. That code — `web/laya-core.js` (`Laya` class), `workflows.html`, `scripts/build_model.py`, `scripts/verify_model.py` — is unchanged and still builds the general checkpoint. The live demo now runs the WCAG model, but the decision-model runtime and its build scripts remain available for the general Laya checkpoint (`convaiinnovations/laya`).
@@ -166,7 +189,8 @@ Before the WCAG fine-tune, this repo ported Laya's general **typed-decision** mo
 | Path | What it is |
 |---|---|
 | `index.html`, `app.js` | the deployed WCAG demo (synced from `web/`) |
-| `web/` | source for the demo: `app.js`, `laya-wcag-core.js`, `index.html`, service worker |
+| `escalator.html`, `escalator.js` | the continuous-learning demo, synced from `web/` (see below) |
+| `web/` | source for the demo: `app.js`, `laya-wcag-core.js`, `index.html`, `escalator.html`/`escalator.js`, service worker |
 | `web/laya-wcag-core.js` | `WcagLaya` runtime: encode → run → sigmoid over 63 criteria |
 | `web/laya-core.js` | the general decision-model runtime (`Laya` class) |
 | `model/` | the deployed WCAG build: graph, 16 data parts, `manifest.json`, tokenizer/config, `wcag_criteria.json` |

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Laya WCAG 2.2 — continuous learning from an LLM</title>
+<style>
+  :root{
+    --bg:#f6f5f1; --card:#ffffff; --ink:#1c1b19; --ink2:#5b5850; --line:#e3e0d8;
+    --accent:#2a5bd7; --accent-ink:#ffffff; --good:#1f7a4d; --warn:#b4570a; --bad:#b3261e;
+    --bar:#d9e2fb; --bar-top:#2a5bd7;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    --bg:#151513; --card:#1e1d1a; --ink:#f0eee8; --ink2:#a6a297; --line:#33312c;
+    --accent:#7ea2ff; --accent-ink:#0d1220; --good:#5fcf95; --warn:#f0a35c; --bad:#ff7a6e;
+    --bar:#2a3555; --bar-top:#7ea2ff; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:1080px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:24px;margin:8px 0}
+  h2{font-size:16px;margin:0 0 10px}
+  .sub{color:var(--ink2);margin:0 0 20px}
+  .sub a{color:var(--accent)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;align-items:end}
+  label{font-size:12px;color:var(--ink2);display:block;margin-bottom:4px}
+  select,input{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+  input[type="range"]{padding:0}
+  button{font:inherit;background:var(--accent);color:var(--accent-ink);border:none;border-radius:8px;padding:8px 16px;cursor:pointer}
+  button:disabled{opacity:.45;cursor:default}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  .status{margin-top:10px;font-size:13px;color:var(--ink2)}
+  .status.warn{color:var(--warn)}
+  .progress{display:none;height:6px;background:var(--bar);border-radius:3px;margin-top:10px;overflow:hidden}
+  .progress div{height:100%;width:0;background:var(--bar-top);transition:width .2s}
+  .badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .badge{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 10px;color:var(--ink2)}
+  .badge.ok{border-color:var(--good);color:var(--good)}
+  /* loop diagram */
+  .loop{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px}
+  .loop .node{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;min-width:150px}
+  .node b{display:block;font-size:13px}
+  .node small{color:var(--ink2)}
+  .node.model{border-color:var(--bar-top)}
+  .node.teacher{border-color:var(--warn)}
+  .node.learn{border-color:var(--good)}
+  .loop .arrow{color:var(--ink2);font-size:18px}
+  .loop .arrow small{display:block;font-size:10px}
+  /* verdicts table */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink2)}
+  .cid{font-family:var(--mono);white-space:nowrap}
+  .ctest{color:var(--ink2);font-size:12px;margin-top:2px}
+  .pbar{display:inline-block;width:70px;height:8px;background:var(--bar);border-radius:4px;overflow:hidden;vertical-align:middle;margin-right:6px}
+  .pbar span{display:block;height:100%;background:var(--bar-top)}
+  .p{font-family:var(--mono);font-size:12px}
+  .pmove{font-family:var(--mono);font-size:12px}
+  .chip{display:inline-block;font-size:11px;border-radius:999px;padding:2px 8px;border:1px solid var(--line);white-space:nowrap}
+  .chip.knows{border-color:var(--good);color:var(--good)}
+  .chip.abstain,.chip.unbound{border-color:var(--warn);color:var(--warn)}
+  .chip.learned{border-color:var(--good);color:var(--good)}
+  .chip.failed{border-color:var(--bad);color:var(--bad)}
+  .verdict{font-family:var(--mono);font-size:12px}
+  .verdict.v{color:var(--warn)} .verdict.o{color:var(--good)}
+  pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font:12px var(--mono);max-height:200px}
+  /* metrics */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .kpi{border:1px solid var(--line);border-radius:10px;padding:10px}
+  .kpi .v{font-size:22px;font-family:var(--mono)}
+  .kpi .l{font-size:11px;color:var(--ink2)}
+  .knote{font-size:12px;color:var(--ink2);margin-top:8px}
+  canvas{width:100%;height:200px;display:block;margin-top:12px;border:1px solid var(--line);border-radius:8px}
+  ul.loglist{list-style:none;margin:10px 0 0;padding:0;max-height:220px;overflow:auto;font-size:12px;font-family:var(--mono)}
+  ul.loglist li{padding:3px 0;border-bottom:1px dashed var(--line);color:var(--ink2)}
+  ul.loglist li.warn{color:var(--bad)}
+  ul.loglist li.head{color:var(--accent);font-weight:700}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:800px){.cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Laya WCAG 2.2 · continuous learning from an LLM</h1>
+  <p class="sub">The decision model runs here in your browser (ONNX Runtime Web, WASM). When it does not know an answer — it <b>abstains</b> (low confidence) or the criterion is <b>unbound</b> (outside its trained distribution) — the uncertain cases are escalated to an LLM teacher (simulated offline, or a hosted Qwen 3.8 27B / any OpenAI-compatible endpoint). The teacher's verdict is <b>learned in-browser</b>, and the same cases stop needing the LLM on the next pass — exactly the <a href="https://laya.readthedocs.io/en/latest/vegaml.html" target="_blank">laya.Escalator</a> loop, with the learner simplified to a per-criterion delta head that fits in a browser tab. <a href="./index.html">← main WCAG demo</a></p>
+
+  <section class="card">
+    <h2>1 · Load the WASM decision model</h2>
+    <div class="row">
+      <div>
+        <label for="backend">Backend</label>
+        <select id="backend">
+          <option value="wasm">WASM (CPU)</option>
+          <option value="webgpu">WebGPU (experimental)</option>
+        </select>
+      </div>
+      <div><button id="eloadBtn">Load model</button></div>
+    </div>
+    <div class="progress" id="eprog"><div id="eprogBar"></div></div>
+    <div class="status" id="estatus">Not loaded yet. Loading downloads the model files from this site (~395 MB, once per visit — cached afterwards).</div>
+    <div class="badges" id="ebadges"></div>
+  </section>
+
+  <section class="card">
+    <h2>The loop</h2>
+    <div class="loop">
+      <div class="node model"><b>WASM decision model</b><small>63 WCAG 2.2 criteria → p(violated)</small></div>
+      <span class="arrow">→<small>abstain / unbound</small></span>
+      <div class="node teacher"><b>LLM teacher</b><small>simulated, or hosted Qwen 3.8 27B (OpenAI-compatible)</small></div>
+      <span class="arrow">→<small>verdict learned</small></span>
+      <div class="node learn"><b>In-browser learner</b><small>per-criterion delta head, re-fit after every escalation</small></div>
+      <span class="arrow">↺<small>fewer LLM calls</small></span>
+    </div>
+    <div class="cols" style="margin-top:14px">
+      <div>
+        <label for="tmode">Teacher</label>
+        <select id="tmode">
+          <option value="simulated">Simulated (offline, deterministic — works with no key)</option>
+          <option value="live">Live LLM (hosted, OpenAI-compatible chat completions)</option>
+        </select>
+        <div id="liveFields" style="display:none;margin-top:10px">
+          <div class="row" style="grid-template-columns:2fr 1fr">
+            <div><label for="tbase">Base URL</label><input id="tbase" placeholder="https://openrouter.ai/api/v1" spellcheck="false"></div>
+            <div><label for="tmodel">Model ID</label><input id="tmodel" placeholder="qwen3.8-27b" spellcheck="false"></div>
+          </div>
+          <label for="tkey" style="margin-top:8px">API key (stored only in your browser's localStorage)</label>
+          <input id="tkey" type="password" placeholder="sk-…" spellcheck="false">
+          <div class="row" style="margin-top:10px">
+            <button class="ghost" id="presetQwen">Preset: Qwen 3.8 27B · hosted</button>
+            <button class="ghost" id="presetVllm">Preset: self-hosted vLLM</button>
+          </div>
+          <p class="knote" style="margin:8px 0 0">The browser calls the endpoint directly (CORS must allow this origin). The key never leaves your browser; nothing here is stored server-side. A live answer that is not a clear YES/NO is retried once, then logged as a failed escalation.</p>
+        </div>
+      </div>
+      <div class="kpis" style="align-content:start">
+        <div class="kpi"><div class="v" id="kCalls">0</div><div class="l">teacher (LLM) calls so far</div></div>
+        <div class="kpi"><div class="v" id="kCallsLast">0</div><div class="l">calls on the last example</div></div>
+        <div class="kpi"><div class="v" id="kModel">0</div><div class="l">criteria resolved by the model</div></div>
+        <div class="kpi"><div class="v" id="kTeacher">0</div><div class="l">criteria resolved via the LLM</div></div>
+        <div class="kpi"><div class="v" id="kAbstain">–</div><div class="l">uncertain on the last example</div></div>
+      </div>
+    </div>
+    <p class="knote" id="kNote">Load the model, then “Auto-run all” to watch teacher calls decay across rounds.</p>
+  </section>
+
+  <section class="card">
+    <h2>2 · WCAG 2.2 examples</h2>
+    <div class="row" style="margin-bottom:12px">
+      <div>
+        <label for="exsel">Example snippet</label>
+        <select id="exsel"></select>
+      </div>
+      <div>
+        <label for="tau">Confidence line — abstain below <span id="tauVal">0.65</span></label>
+        <input type="range" id="tau" min="0.50" max="0.95" step="0.05" value="0.65">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button id="runBtn" disabled>Run (Ctrl+Enter)</button>
+        <button id="autoBtn" class="ghost" disabled>Auto-run all</button>
+        <button id="resetBtn" class="ghost">Reset learning</button>
+      </div>
+    </div>
+    <pre id="exhtml"></pre>
+    <p class="knote">The model only sees the markup text (no CSS, no rendered layout), so contrast-style criteria are weak by design. “Run” scores the example, escalates everything the model is not confident about (or that is unbound for it) to the teacher, learns the verdicts, and re-scores. “Auto-run all” walks the 8 examples and records a round on the decay chart — round 2 needs far fewer LLM calls than round 1.</p>
+  </section>
+
+  <section class="card">
+    <h2>3 · Verdicts</h2>
+    <div id="verdicts"><p class="status" style="margin:0">Run an example first.</p></div>
+  </section>
+
+  <section class="card">
+    <h2>4 · LLM-usage decay</h2>
+    <canvas id="chart"></canvas>
+    <p class="knote">Bars: teacher calls per auto-run round. Line: the share of candidate criteria that needed the teacher in that round — learning during the round is what drops it on the next one. “Reset learning” restarts the curve from round 1.</p>
+    <ul class="loglist" id="log"></ul>
+  </section>
+</main>
+<script src="./coi.js"></script>
+<script type="module" src="./escalator.js"></script>
+</body>
+</html>
