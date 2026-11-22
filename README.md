@@ -166,9 +166,15 @@ The second page on the site demonstrates Laya's continuous-learning loop (the sh
   criteria it is not confident about **abstain**, and criteria outside its trained
   distribution are **unbound** (detected at load time: a criterion that answers every
   example with p≈0.5 responds to nothing).
-- Uncertain/unbound cases are escalated to a **teacher LLM** — either the built-in
-  simulated teacher (deterministic ground truth for the bundled examples, no key needed) or a
-  live OpenAI-compatible endpoint (hosted Qwen 3.8 27B, OpenRouter, self-hosted vLLM).
+- Uncertain/unbound cases are escalated to a **real LLM teacher**, three options:
+  - **AI Horde (default):** a real Qwen model on the free public worker network — no API key,
+    CORS-open, keyless (`apikey: ***`). The page lists the live models (often Qwen variants,
+    e.g. `Qwen/Qwen3.8-Flash-Next`), submits each escalation to `/generate/text/async` and polls
+    the queue with the live position shown; “Stop” aborts a waiting job.
+  - **Qwen in your browser:** a real local Qwen (`onnx-community/Qwen2.5-0.5B` / `-1.5B`) via
+    Transformers.js over ONNX/WASM/WebGPU — fully offline after the one-time download.
+  - **Your OpenAI-compatible endpoint:** hosted Qwen 3.8 27B, OpenRouter, a self-hosted vLLM.
+  - An explicitly-labeled **offline** deterministic table exists for dev/CI, not a real model.
 - The teacher's verdict is **learned in-browser**: `escalator.js` keeps a small per-criterion
   logistic delta head over 10 example-signature features (img without alt, missing label,
   heading skip, …), re-fit after every escalation and persisted in localStorage — the
@@ -177,8 +183,9 @@ The second page on the site demonstrates Laya's continuous-learning loop (the sh
   round 1 needs several teacher calls, round 2 (after the delta head absorbed the verdicts)
   needs ~0 — the LLM usage the demo is built to show going away.
 
-The live-teacher key is stored only in the browser's localStorage; the endpoint is called
-directly from the page, so its CORS policy must allow the site's origin.
+Any API key you supply (custom-endpoint mode) is stored only in your browser's localStorage;
+the endpoint is called directly from the page, so its CORS policy must allow the site's
+origin. AI Horde needs no key at all.
 
 ## The general decision model (still in the repo)
 

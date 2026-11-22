@@ -83,7 +83,7 @@
 <body>
 <main>
   <h1>Laya WCAG 2.2 · continuous learning from an LLM</h1>
-  <p class="sub">The decision model runs here in your browser (ONNX Runtime Web, WASM). When it does not know an answer — it <b>abstains</b> (low confidence) or the criterion is <b>unbound</b> (outside its trained distribution) — the uncertain cases are escalated to an LLM teacher (simulated offline, or a hosted Qwen 3.8 27B / any OpenAI-compatible endpoint). The teacher's verdict is <b>learned in-browser</b>, and the same cases stop needing the LLM on the next pass — exactly the <a href="https://laya.readthedocs.io/en/latest/vegaml.html" target="_blank">laya.Escalator</a> loop, with the learner simplified to a per-criterion delta head that fits in a browser tab. <a href="./index.html">← main WCAG demo</a></p>
+  <p class="sub">The decision model runs here in your browser (ONNX Runtime Web, WASM). When it does not know an answer — it <b>abstains</b> (low confidence) or the criterion is <b>unbound</b> (outside its trained distribution) — the uncertain cases are escalated to a <b>real LLM teacher</b> — a real Qwen on the free AI Horde worker network, a Qwen running in your browser via Transformers.js, or your own OpenAI-compatible endpoint. The teacher's verdict is <b>learned in-browser</b>, and the same cases stop needing the LLM on the next pass — exactly the <a href="https://laya.readthedocs.io/en/latest/vegaml.html" target="_blank">laya.Escalator</a> loop, with the learner simplified to a per-criterion delta head that fits in a browser tab. <a href="./index.html">← main WCAG demo</a></p>
 
   <section class="card">
     <h2>1 · Load the WASM decision model</h2>
@@ -107,18 +107,48 @@
     <div class="loop">
       <div class="node model"><b>WASM decision model</b><small>63 WCAG 2.2 criteria → p(violated)</small></div>
       <span class="arrow">→<small>abstain / unbound</small></span>
-      <div class="node teacher"><b>LLM teacher</b><small>simulated, or hosted Qwen 3.8 27B (OpenAI-compatible)</small></div>
+      <div class="node teacher"><b>LLM teacher</b><small>real Qwen: AI Horde · in-browser (Transformers.js) · your OpenAI-compatible endpoint</small></div>
       <span class="arrow">→<small>verdict learned</small></span>
       <div class="node learn"><b>In-browser learner</b><small>per-criterion delta head, re-fit after every escalation</small></div>
       <span class="arrow">↺<small>fewer LLM calls</small></span>
     </div>
     <div class="cols" style="margin-top:14px">
       <div>
-        <label for="tmode">Teacher</label>
+        <label for="tmode">Teacher — where the LLM verdicts come from</label>
         <select id="tmode">
-          <option value="simulated">Simulated (offline, deterministic — works with no key)</option>
-          <option value="live">Live LLM (hosted, OpenAI-compatible chat completions)</option>
+          <option value="horde">AI Horde — real Qwen on the free public worker network (no key)</option>
+          <option value="wasm">Qwen in your browser — real local model via Transformers.js (WASM/WebGPU)</option>
+          <option value="live">Your OpenAI-compatible endpoint (hosted Qwen 3.8 27B, OpenRouter, vLLM, …)</option>
+          <option value="offline">Offline deterministic table (no real model — dev testing only)</option>
         </select>
+
+        <div id="hordeFields" style="display:none;margin-top:10px">
+          <div class="row" style="grid-template-columns:3fr auto">
+            <div>
+              <label for="hmodel">AI Horde text model</label>
+              <select id="hmodel"></select>
+            </div>
+            <div><button class="ghost" id="hrefresh">Refresh</button></div>
+          </div>
+          <p class="status" id="hstatus" style="margin-top:8px">Loading AI Horde model list…</p>
+          <p class="knote" style="margin:8px 0 0">Free public service, no API key; answers come from a real model on volunteer workers (often Qwen variants, e.g. <code>Qwen/Qwen3.8-Flash-Next</code>). Queues vary — the run shows the live queue position and “Stop” aborts a waiting job. Verdicts are the real model's word, not a canned table.</p>
+        </div>
+
+        <div id="wasmFields" style="display:none;margin-top:10px">
+          <div class="row" style="grid-template-columns:3fr auto">
+            <div>
+              <label for="wmodel">Model (ONNX via Transformers.js)</label>
+              <select id="wmodel">
+                <option value="onnx-community/Qwen2.5-0.5B">onnx-community/Qwen2.5-0.5B (fastest, ~300 MB)</option>
+                <option value="onnx-community/Qwen2.5-1.5B">onnx-community/Qwen2.5-1.5B (better, ~1.2 GB)</option>
+              </select>
+            </div>
+            <div><button class="ghost" id="wload">Load Qwen in browser</button></div>
+          </div>
+          <p class="status" id="wstatus" style="margin-top:8px">Not loaded yet. One-time download; then inference is fully local — nothing leaves your machine.</p>
+          <p class="knote" style="margin:8px 0 0">Experimental: a real Qwen model in WASM (WebGPU when available). Slower than the Horde for a 27B-class model, but offline and self-contained.</p>
+        </div>
+
         <div id="liveFields" style="display:none;margin-top:10px">
           <div class="row" style="grid-template-columns:2fr 1fr">
             <div><label for="tbase">Base URL</label><input id="tbase" placeholder="https://openrouter.ai/api/v1" spellcheck="false"></div>
@@ -126,11 +156,11 @@
           </div>
           <label for="tkey" style="margin-top:8px">API key (stored only in your browser's localStorage)</label>
           <input id="tkey" type="password" placeholder="sk-…" spellcheck="false">
-          <div class="row" style="margin-top:10px">
-            <button class="ghost" id="presetQwen">Preset: Qwen 3.8 27B · hosted</button>
-            <button class="ghost" id="presetVllm">Preset: self-hosted vLLM</button>
-          </div>
-          <p class="knote" style="margin:8px 0 0">The browser calls the endpoint directly (CORS must allow this origin). The key never leaves your browser; nothing here is stored server-side. A live answer that is not a clear YES/NO is retried once, then logged as a failed escalation.</p>
+          <p class="knote" style="margin:8px 0 0">The browser calls the endpoint directly (CORS must allow this origin). An answer that is not a clear YES/NO is retried once, then logged as a failed escalation.</p>
+        </div>
+
+        <div id="offlineNote" style="display:none;margin-top:10px">
+          <p class="knote" style="margin:0">No real model: verdicts come from the bundled examples' ground-truth table. Useful for offline development and CI — not a demonstration of real LLM learning. Switch to AI Horde for the real thing.</p>
         </div>
       </div>
       <div class="kpis" style="align-content:start">

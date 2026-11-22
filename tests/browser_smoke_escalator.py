@@ -36,15 +36,29 @@ def main():
         pg.on("requestfailed", lambda r: logs.append(f"[reqfail] {r.url[-120:]} {r.failure}"))
         pg.goto(f"http://127.0.0.1:{port}/escalator.html")
 
+        # CI has no external-network guarantee: pin the OFFLINE deterministic teacher so the
+        # loop (escalate -> learn -> decay) is fully deterministic. Real teachers (AI Horde,
+        # in-browser Qwen) are exercised separately; the Horde preflight is checked, not required.
+        pg.evaluate("localStorage.setItem('laya-escalator-teach', JSON.stringify({ mode: 'offline' }))")
+        pg.reload()
+
         # example dropdown is populated immediately; the model loads on demand
         pg.wait_for_function("document.querySelectorAll('#exsel option').length > 0", timeout=30000)
+        print("teacher mode:", pg.evaluate("document.getElementById('tmode').value"))
         pg.click("#eloadBtn")
+
+        # Non-fatal: the AI Horde prefill (live model dropdown) needs the public internet.
+        try:
+            pg.wait_for_function("document.querySelectorAll('#hmodel option').length > 1", timeout=30000)
+            print("AI Horde prefill: ok (%d models)" % pg.evaluate("document.querySelectorAll('#hmodel option').length"))
+        except Exception:
+            print("AI Horde prefill: not reachable (offline CI) - skipping")
 
         # Model + out-of-bounds probe finish when the page sets window.escReady.
         pg.wait_for_function("window.escReady === true", timeout=900_000)
         print("model ready:", pg.evaluate("document.getElementById('estatus').textContent")[:120])
 
-        # One auto-run round: every example, escalations to the simulated teacher, learning.
+        # One auto-run round: every example, escalations to the (offline) teacher, learning.
         pg.click("#autoBtn")
         pg.wait_for_function("document.getElementById('log').innerText.includes('Round 1:')", timeout=900_000)
         kpi = pg.evaluate("""() => ({
@@ -55,10 +69,13 @@ def main():
         print("round1 KPI:", json.dumps(kpi))
 
         verdicts = pg.evaluate("document.getElementById('verdicts').innerText")
-        assert "Criterion" in verdicts, "verdict table header missing"
+        # the <th>s render uppercased (text-transform), so match case-insensitively
+        assert "criterion" in verdicts.lower(), "verdict table header missing"
+        # learning happened somewhere in the round: the teacher-resolved KPI is > 0
+        assert int(kpi["teacher"]) >= 1, "no criteria were resolved via the teacher (no learning) in round 1"
 
         # Assertions:
-        #  - at least one teacher call happened (simulated teacher, no key needed)
+        #  - at least one teacher call happened (offline teacher, no key/network needed)
         #  - at least one criterion resolved by the model alone
         #  - the decay chart recorded a round (log contains "Round 1:")
         calls = int(kpi["calls"]); model = int(kpi["model"]); teacher = int(kpi["teacher"])

@@ -2,8 +2,9 @@
 // The loop (same shape as laya.Escalator, https://laya.readthedocs.io/en/latest/vegaml.html):
 //   1. WASM decision model scores each candidate criterion -> p(violated)
 //   2. criteria the model is not confident about (abstain) or that are out of its trained
-//      distribution (unbound) are escalated to a teacher LLM (simulated, or a hosted
-//      OpenAI-compatible endpoint such as Qwen 3.8 27B)
+//      distribution (unbound) are escalated to a real LLM teacher — AI Horde's free worker
+//      network (often Qwen models, e.g. Qwen 3.8), a Qwen in this browser via
+//      Transformers.js, or your own OpenAI-compatible endpoint
 //   3. the teacher's verdict is learned in-browser: a small per-criterion delta head
 //      (logistic update over example-signature features, Laya's continuous learner,
 //      simplified to fit in a browser page) is re-fit after every escalation
@@ -21,7 +22,7 @@ const KEY_MEM = "laya-escalator-mem";
 const KEY_TEA = "laya-escalator-teach";
 
 // ---------- WCAG 2.2 examples (markup only, same constraint as the model) ----------
-// cands: criteria the example is about. truth: ground truth used by the simulated teacher
+// cands: criteria the example is about. truth: ground truth used by the OFFLINE dev-teacher
 // (1 = violation present, 0 = no violation). test: the strict one-liner sent to a live LLM.
 const EXAMPLES = [
   {
@@ -329,34 +330,119 @@ async function probeBounds() {
 }
 
 // ---------- Teachers ----------
-// Simulated teacher: deterministic ground truth for the bundled examples, with a little
-// latency to mimic a real model call. Live teacher: any OpenAI-compatible chat endpoint
-// (hosted Qwen 3.8 27B, OpenRouter, a self-hosted vLLM, …).
+// Four teacher backends:
+//  horde   - AI Horde: a REAL Qwen-family model on the free public worker network (no API key).
+//            submit POST /generate/text/async, poll GET /generate/text/status/<id>.
+//  wasm    - a REAL Qwen loaded in this browser via Transformers.js (ONNX over WASM/WebGPU).
+//  live    - your own OpenAI-compatible endpoint (key stays in your browser's localStorage).
+//  offline - deterministic ground truth for the bundled examples. NOT a real model: dev/testing only.
 function teacherCfg() {
-  let c = { mode: "simulated", base: "", key: "", model: "" };
+  let c = { mode: "horde", base: "", key: "", model: "", hordeModel: "", wasmModel: "" };
   try { c = { ...c, ...JSON.parse(localStorage.getItem(KEY_TEA) || "{}") }; } catch { /* fresh */ }
   return c;
 }
 function saveTeacherCfg(c) { localStorage.setItem(KEY_TEA, JSON.stringify(c)); }
 
-async function askTeacher(ex, cd) {
-  const cfg = teacherCfg();
-  if (cfg.mode === "live") {
-    const label = await askLiveLLM(cfg, ex, cd);
-    return { label, source: "live LLM · " + cfg.model };
-  }
-  await new Promise((r) => setTimeout(r, 300 + Math.random() * 250));
-  return { label: cd.truth, source: "simulated teacher (deterministic ground truth)" };
-}
-
-async function askLiveLLM(cfg, ex, cd) {
-  const base = cfg.base.replace(/\/+$/, "");
-  if (!base) throw new Error("Live mode needs a base URL (e.g. https://openrouter.ai/api/v1).");
+// Shared strict yes/no prompt (used by every real-teacher mode).
+function buildVerdictPrompt(ex, cd) {
   const sys = "You are a senior WCAG 2.2 accessibility auditor answering yes/no verdicts for an automated pipeline. Be strict and literal: judge only what the fragment shows; missing required markup is a violation. Answer with exactly one word: YES (the criterion IS violated) or NO (it is not violated, or it does not apply to this fragment).";
   const user = `HTML fragment:\n\`\`\`html\n${ex.html}\n\`\`\`\n\nCriterion ${cd.id} — ${cd.test}\nQuestion: Does this fragment violate this criterion?`;
+  return { sys, user };
+}
+
+// ---- AI Horde (default, real) ----
+const HORDE_API = "https://aihorde.net/api/v2";
+const HORDE_HD = { "Content-Type": "application/json", apikey: "0000000000", "Client-Agent": "laya-wcag-escalator-demo/1.0" };
+let hordeModels = [];
+async function loadHordeModels() {
+  const r = await fetch(`${HORDE_API}/status/models?type=text`, { headers: { ...HORDE_HD } });
+  if (!r.ok) throw new Error(`AI Horde models: HTTP ${r.status}`);
+  hordeModels = (await r.json()).filter((m) => m.type === "text");
+  return hordeModels;
+}
+// Default: prefer a real Qwen worker with the lowest queue ETA.
+function pickDefaultHordeModel() {
+  const qw = hordeModels.filter((m) => /qwen/i.test(m.name)).sort((a, b) => (a.eta || 1e9) - (b.eta || 1e9));
+  if (qw.length) return qw[0].name;
+  hordeModels.sort((a, b) => (a.eta || 1e9) - (b.eta || 1e9));
+  return hordeModels[0] ? hordeModels[0].name : "";
+}
+const sleep = (ms, signal) => new Promise((res, rej) => {
+  const t = setTimeout(res, ms);
+  if (signal) signal.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("stopped", "AbortError")); }, { once: true });
+});
+async function askHorde(cfg, ex, cd, signal, onProgress) {
+  const model = cfg.hordeModel || (hordeModels.length ? pickDefaultHordeModel() : "Qwen/Qwen3.8-Flash-Next");
+  const { sys, user } = buildVerdictPrompt(ex, cd);
+  const submit = await fetch(`${HORDE_API}/generate/text/async`, {
+    method: "POST", headers: { ...HORDE_HD }, signal,
+    body: JSON.stringify({
+      prompt: sys + "\n\n" + user, models: [model], context_fit: "reject",
+      params: { max_context_length: 2048, max_length: 16, temperature: 0.0, top_p: 0.9, rep_pen: 1.05 },
+    }),
+  });
+  const sj = await submit.json().catch(() => null);
+  if (!submit.ok) throw new Error(`AI Horde submit HTTP ${submit.status}${sj?.message ? ": " + sj.message : ""}`);
+  if (!sj || !sj.id) throw new Error("AI Horde accepted no job ID (worker queue may be full — try another model or later).");
+  onProgress?.(`AI Horde · ${model} — queued (job ${sj.id.slice(0, 8)}…)`);
+  const deadline = Date.now() + 10 * 60 * 1000; // free queues move slowly; cap per escalation
+  while (Date.now() < deadline) {
+    await sleep(4000, signal);
+    const sr = await fetch(`${HORDE_API}/generate/text/status/${encodeURIComponent(sj.id)}`, { headers: { apikey: HORDE_HD.apikey }, signal });
+    const s = await sr.json().catch(() => null);
+    if (!sr.ok) throw new Error(`AI Horde status HTTP ${sr.status}`);
+    if (s.faulted) throw new Error("AI Horde faulted this generation — try another model.");
+    if (s.done) {
+      const text = (s.generations?.[0]?.text || "").trim();
+      const label = parseVerdict(text);
+      if (label == null) throw new Error("model answer was not a clear YES/NO: " + text.slice(0, 80));
+      return label;
+    }
+    onProgress?.(`AI Horde · ${model} — queue position ${s.queue_position ?? "?"} (${Math.round((Date.now() - (deadline - 10 * 60 * 1000)) / 1000)}s waiting…)`);
+  }
+  throw new Error("AI Horde queue did not clear in 10 min — stop and retry, or pick a faster model.");
+}
+
+// ---- Qwen in this browser (Transformers.js, real local model) ----
+let wasmQwen = null; // { pipe, repo }
+const WASM_PRESETS = ["onnx-community/Qwen2.5-0.5B", "onnx-community/Qwen2.5-1.5B"];
+async function loadWasmQwen(repo, onProgress) {
+  if (wasmQwen && wasmQwen.repo === repo) return wasmQwen;
+  const mod = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.1/dist/transformers.min.js");
+  const { pipeline, AutoTokenizer, env } = mod;
+  if (navigator.gpu) { try { env.backends.onnx.webgpu = { enabled: true }; } catch { /* fall back to WASM */ } }
+  onProgress?.(`Loading ${repo} tokenizer…`);
+  const tokenizer = await AutoTokenizer.from_pretrained(repo);
+  onProgress?.(`Loading ${repo} model weights…`);
+  const pipe = await pipeline("text-generation", repo, { progress_callback: onProgress });
+  onProgress?.("Running warm-up pass…");
+  await pipe(tokenizer.apply_chat_template("hi", { add_generation_prompt: false }), { max_new_tokens: 1, do_sample: false });
+  wasmQwen = { pipe, tokenizer, repo };
+  return wasmQwen;
+}
+async function askWasm(ex, cd) {
+  if (!wasmQwen) throw new Error("In-browser Qwen not loaded yet — press “Load Qwen in browser” first.");
+  const { sys, user } = buildVerdictPrompt(ex, cd);
+  const prompt = wasmQwen.tokenizer.apply_chat_template([
+    { role: "system", content: sys }, { role: "user", content: user },
+  ], { add_generation_prompt: true });
+  const out = await wasmQwen.pipe(prompt, { max_new_tokens: 16, do_sample: false });
+  const text = (out[0]?.generated_text || "").trim();
+  const label = parseVerdict(text);
+  if (label == null) throw new Error("model answer was not a clear YES/NO: " + text.slice(0, 80));
+  return label;
+}
+
+// ---- Custom OpenAI-compatible endpoint (your key, your provider) ----
+async function askLiveLLM(cfg, ex, cd, signal) {
+  const base = cfg.base.replace(/\/+$/, "");
+  if (!base) throw new Error("Live mode needs a base URL (e.g. https://openrouter.ai/api/v1).");
+  const { sys, user } = buildVerdictPrompt(ex, cd);
   const doCall = async () => {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 60_000);
+    const onAbort = () => ctl.abort();
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
     try {
       const r = await fetch(base + "/chat/completions", {
         method: "POST",
@@ -367,15 +453,35 @@ async function askLiveLLM(cfg, ex, cd) {
       if (!r.ok) throw new Error(`LLM HTTP ${r.status}`);
       const d = await r.json();
       return (d.choices?.[0]?.message?.content || "").trim();
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); if (signal) signal.removeEventListener("abort", onAbort); }
   };
   for (let attempt = 0; attempt < 2; attempt++) {
     const text = await doCall();
     const label = parseVerdict(text);
     if (label != null) return label;
   }
-  throw new Error("LLM answer was not a clear YES/NO: " + text?.slice(0, 80));
+  throw new Error("LLM answer was not a clear YES/NO: " + (text || "(no text)"))
 }
+
+async function askTeacher(ex, cd, signal, onProgress) {
+  const cfg = teacherCfg();
+  if (cfg.mode === "horde") {
+    const label = await askHorde(cfg, ex, cd, signal, onProgress);
+    return { label, source: "AI Horde · real model " + (cfg.hordeModel || "auto") };
+  }
+  if (cfg.mode === "wasm") {
+    const label = await askWasm(ex, cd);
+    return { label, source: "in-browser Qwen (Transformers.js, " + (wasmQwen ? wasmQwen.repo : "not loaded") + ")" };
+  }
+  if (cfg.mode === "live") {
+    const label = await askLiveLLM(cfg, ex, cd, signal);
+    return { label, source: "live LLM · " + cfg.model };
+  }
+  // offline: deterministic, NOT a real model
+  await sleep(300 + Math.random() * 250);
+  return { label: cd.truth, source: "offline deterministic table (NOT a real LLM — dev testing only)" };
+}
+
 function parseVerdict(text) {
   const t = (text || "").toUpperCase().trim();
   if (!t) return null;
@@ -389,14 +495,24 @@ function parseVerdict(text) {
 // ---------- State ----------
 let stats = { calls: 0, modelResolved: 0, teacherResolved: 0, rounds: [] }; // rounds: [{calls, abstainPct}]
 let running = false;
+let runAbort = null; // AbortController for the active run (stops long Horde queue waits)
 
 // Score one example: model pass -> escalate the uncertain/unbound -> learn -> re-score.
 // Public entry (Run button): guarded so it can't interrupt an auto-run or itself.
+// While a run is in flight the button becomes “Stop” (clicking it aborts the active round).
 async function runExample(idx) {
-  if (!session || running) return;
-  running = true; $("runBtn").disabled = true; $("autoBtn").disabled = true;
+  if (!session) return;
+  if (running) { runAbort?.abort(); return; }
+  runAbort = new AbortController();
+  running = true; setRunButtons(true);
   try { await runExampleInner(idx); }
-  finally { running = false; $("runBtn").disabled = false; $("autoBtn").disabled = false; }
+  catch (e) { if (e?.name !== "AbortError") addLog("Run stopped: " + e.message, "warn"); else addLog("Run stopped (you clicked Stop).", "warn"); }
+  finally { running = false; runAbort = null; setRunButtons(false); }
+}
+function setRunButtons(isRunning) {
+  $("runBtn").disabled = false; $("autoBtn").disabled = false;
+  $("runBtn").textContent = isRunning ? "Stop (aborts long LLM waits)" : "Run (Ctrl+Enter)";
+  $("autoBtn").textContent = isRunning ? "Stop" : "Auto-run all";
 }
 async function runExampleInner(idx) {
   const ex = EXAMPLES[idx];
@@ -419,14 +535,17 @@ async function runExampleInner(idx) {
   // Escalation: ask the teacher for every uncertain / unbound criterion.
   let calls = 0, failed = [];
   for (const r of esc) {
+    if (runAbort?.signal.aborted) { failed.push(r); break; }
+    addLog(`${ex.name} · ${r.cd.id} ${criteria[r.i].description}`, `${r.status} — asking the teacher…`, false);
     try {
-      const t = await askTeacher(ex, r.cd);
+      const t = await askTeacher(ex, r.cd, runAbort?.signal, (msg) => { $("kNote").textContent = msg; });
       calls++;
       learner.push(phi, r.i, t.label);
       r.label = t.label;
       r.learned = true;
-      addLog(`${ex.name} · ${r.cd.id} ${criteria[r.i].description}`, `${r.status} → teacher said ${t.label ? "VIOLATION" : "no violation"} (${t.source})`);
+      addLog(`${ex.name} · ${r.cd.id}`, `→ teacher said ${t.label ? "VIOLATION" : "no violation"} · ${t.source}`);
     } catch (e) {
+      if (e?.name === "AbortError") { failed.push(r); break; }
       calls++; failed.push(r);
       addLog(`${ex.name} · ${r.cd.id}`, `escalation failed: ${e.message}`, true);
       r.status = "failed";
@@ -450,8 +569,8 @@ async function runExampleInner(idx) {
   $("kTeacher").textContent = stats.teacherResolved;
   const nEsc = esc.length;
   $("kAbstain").textContent = rows.length ? Math.round((nEsc / rows.length) * 100) + "%" : "0%";
-  if (esc.length) $("kNote").textContent = `${calls} teacher call${calls === 1 ? "" : "s"} on this example${failed.length ? ` (${failed.length} failed)` : ""} — the verdicts are learned, so the next run of this example should need fewer.`;
-  else $("kNote").textContent = "0 teacher calls — the model resolved every criterion on its own.";
+  if (esc.length) $("kNote").textContent = `${calls} teacher call${calls === 1 ? "" : "s"} on this example${failed.length ? ` (${failed.length} failed/stopped)` : ""} — the verdicts are learned, so the next run of this example should need fewer.`;
+  else $("kNote").textContent = "0 teacher calls — the model resolved every criterion on its own (no LLM needed).";
 
   renderVerdicts(ex, rows);
   return { total: rows.length, esc: esc.length, failed: failed.length };
@@ -459,8 +578,10 @@ async function runExampleInner(idx) {
 
 // Auto-run: every example in order, one "round". Records the round for the decay chart.
 async function autoRun() {
-  if (!session || running) return;
-  running = true; $("runBtn").disabled = true; $("autoBtn").disabled = true;
+  if (!session) return;
+  if (running) { runAbort?.abort(); return; } // second click = stop
+  runAbort = new AbortController();
+  running = true; setRunButtons(true);
   try {
     const calls0 = stats.calls;
     let escNow = 0, totNow = 0;
@@ -475,8 +596,11 @@ async function autoRun() {
     if (stats.rounds.length > 12) stats.rounds.shift();
     drawChart();
     addLog(`Round ${stats.rounds.length}: ${calls} teacher call${calls === 1 ? "" : "s"} · ${stats.rounds[stats.rounds.length - 1].abstainPct}% of candidate criteria needed the teacher this pass`, false, true);
+  } catch (e) {
+    if (e?.name === "AbortError") addLog("Run stopped (queued LLM calls aborted).", "warn");
+    else addLog("Run stopped: " + e.message, "warn");
   } finally {
-    running = false; $("runBtn").disabled = false; $("autoBtn").disabled = false;
+    running = false; runAbort = null; setRunButtons(false);
   }
 }
 
@@ -591,27 +715,94 @@ function drawChart() {
 // ---------- Wiring ----------
 function initTeacherUI() {
   const cfg = teacherCfg();
-  $("tmode").value = cfg.mode;
+  $("tmode").value = ["horde", "wasm", "live", "offline"].includes(cfg.mode) ? cfg.mode : "horde";
   $("tbase").value = cfg.base || "";
   $("tkey").value = cfg.key || "";
   $("tmodel").value = cfg.model || "";
-  $("liveFields").style.display = cfg.mode === "live" ? "" : "none";
+  $("hmodel").value = cfg.hordeModel || "";
+  $("wmodel").value = cfg.wasmModel || WASM_PRESETS[0];
   const persist = () => {
-    const c = { mode: $("tmode").value, base: $("tbase").value, key: $("tkey").value, model: $("tmodel").value };
+    const c = {
+      mode: $("tmode").value,
+      base: $("tbase").value, key: $("tkey").value, model: $("tmodel").value,
+      hordeModel: $("hmodel").value, wasmModel: $("wmodel").value,
+    };
     saveTeacherCfg(c);
-    $("liveFields").style.display = c.mode === "live" ? "" : "none";
-    addLog(c.mode === "live" ? `Teacher: live LLM @ ${c.base} (${c.model})` : "Teacher: simulated (offline, deterministic)");
+    applyTeacherUI();
+    addLog(
+      c.mode === "horde" ? `Teacher: AI Horde (real model) — ${c.hordeModel || "auto (fastest Qwen)"}`
+      : c.mode === "wasm" ? `Teacher: in-browser Qwen (${c.wasmModel || WASM_PRESETS[0]})`
+      : c.mode === "live" ? `Teacher: live LLM @ ${c.base} (${c.model})`
+      : "Teacher: OFFLINE deterministic table (no real model — dev testing only)");
   };
   $("tmode").addEventListener("change", persist);
-  ["tbase", "tkey", "tmodel"].forEach((id) => $(id).addEventListener("change", persist));
-  $("presetQwen").addEventListener("click", () => {
-    $("tmode").value = "live"; $("tbase").value = "https://openrouter.ai/api/v1"; $("tmodel").value = "qwen3.8-27b";
-    persist(); addLog("Preset: Qwen 3.8 27B (hosted via OpenRouter). Adjust the model ID to your provider's exact name; add your key.");
+  ["tbase", "tkey", "tmodel", "hmodel", "wmodel"].forEach((id) => $(id).addEventListener("change", persist));
+  $("hrefresh").addEventListener("click", async () => {
+    $("hstatus").textContent = "Loading AI Horde model list…";
+    try {
+      await loadHordeModels();
+      fillHordeSelect();
+      const d = teacherCfg(); d.hordeModel = $("hmodel").value || pickDefaultHordeModel(); $("hmodel").value = d.hordeModel;
+      $("hstatus").textContent = `${hordeModels.length} real text models available · default: ${$("hmodel").value || pickDefaultHordeModel()}`;
+      persist();
+    } catch (e) { $("hstatus").textContent = "Could not reach AI Horde: " + e.message; addLog("Horde model list failed: " + e.message, "warn"); }
   });
-  $("presetVllm").addEventListener("click", () => {
-    $("tmode").value = "live"; $("tbase").value = "http://localhost:8000/v1"; $("tmodel").value = "qwen3.8-27b";
-    persist(); addLog("Preset: self-hosted vLLM (laya.vllm_teacher style). Set --allowed-origins so this site may call it.");
+  $("wload").addEventListener("click", async () => {
+    const repo = $("wmodel").value || WASM_PRESETS[0];
+    const cfg = teacherCfg(); cfg.wasmModel = repo; saveTeacherCfg(cfg);
+    try {
+      $("wstatus").textContent = `Loading ${repo} in your browser (one-time, ~100–400 MB)…`;
+      await loadWasmQwen(repo, (ev) => {
+        if (typeof ev === "string") $("wstatus").textContent = ev;
+        else if (ev && ev.status === "progress" && ev.total) $("wstatus").textContent = `Downloading ${ev.file}: ${Math.round((ev.loaded / ev.total) * 100)}%`;
+      });
+      $("wstatus").textContent = `In-browser Qwen ready: ${repo} (WebGPU ${navigator.gpu ? "if available" : "unavailable"}, else WASM) — real local inference, nothing leaves your machine.`;
+      addLog(`In-browser Qwen loaded: ${repo}`);
+    } catch (e) {
+      $("wstatus").textContent = "Could not load the in-browser model: " + e.message + " — try another preset or switch to AI Horde.";
+      addLog("WASM Qwen load failed: " + e.message, "warn");
+    }
   });
+  applyTeacherUI();
+}
+function applyTeacherUI() {
+  const m = $("tmode").value;
+  $("hordeFields").style.display = m === "horde" ? "" : "none";
+  $("wasmFields").style.display = m === "wasm" ? "" : "none";
+  $("liveFields").style.display = m === "live" ? "" : "none";
+  $("offlineNote").style.display = m === "offline" ? "" : "none";
+}
+function fillHordeSelect() {
+  const sel = $("hmodel");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  const auto = document.createElement("option");
+  auto.value = ""; auto.textContent = "Auto — fastest Qwen worker (lowest queue ETA)";
+  sel.appendChild(auto);
+  for (const m of hordeModels) {
+    const o = document.createElement("option");
+    o.value = m.name;
+    o.textContent = `${m.name} — ETA ${m.eta != null ? m.eta + "s" : "?"} · ${m.queued} queued · ${m.count} worker${m.count === 1 ? "" : "s"}`;
+    sel.appendChild(o);
+  }
+  if (hordeModels.length && !sel.selectedOptions?.[0]?.value) sel.value = prev && hordeModels.some((m) => m.name === prev) ? prev : pickDefaultHordeModel();
+}
+// Preload the Horde model list + pick a sensible default on page open (no key, free, real models).
+initHordePreflight();
+async function initHordePreflight() {
+  const cfg = teacherCfg();
+  if (cfg.mode === "offline") return;
+  try {
+    await loadHordeModels();
+    fillHordeSelect();
+    if (!cfg.hordeModel && !$("hmodel").value) { cfg.hordeModel = pickDefaultHordeModel(); $("hmodel").value = cfg.hordeModel; saveTeacherCfg(cfg); }
+    const chosen = $("hmodel").value || pickDefaultHordeModel();
+    const mm = hordeModels.find((m) => m.name === chosen);
+    $("hstatus").textContent = `${hordeModels.length} real text models on AI Horde · default: ${chosen}${mm && mm.eta != null ? ` (ETA ~${mm.eta}s, ${mm.queued} queued)` : ""}`;
+    applyTeacherUI();
+  } catch (e) {
+    $("hstatus").textContent = "AI Horde model list unavailable: " + e.message + " (the demo still works — submissions may be queued).";
+  }
 }
 
 function init() {
