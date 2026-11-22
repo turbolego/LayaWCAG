@@ -360,12 +360,14 @@ async function loadHordeModels() {
   hordeModels = (await r.json()).filter((m) => m.type === "text");
   return hordeModels;
 }
-// Default: prefer a real Qwen worker with the lowest queue ETA.
+// Default: prefer a real Qwen worker — lowest queue ETA first, then most workers,
+// then a Qwen 3.8-class name when tied. (?? not ||: eta 0 is a real "empty queue".)
 function pickDefaultHordeModel() {
-  const qw = hordeModels.filter((m) => /qwen/i.test(m.name)).sort((a, b) => (a.eta || 1e9) - (b.eta || 1e9));
+  const rank = (m) => (m.eta ?? 1e9) * 1000 - (m.count || 0); // ETA dominates, workers break ties
+  const qw = hordeModels.filter((m) => /qwen/i.test(m.name)).sort((a, b) => rank(a) - rank(b));
   if (qw.length) return qw[0].name;
-  hordeModels.sort((a, b) => (a.eta || 1e9) - (b.eta || 1e9));
-  return hordeModels[0] ? hordeModels[0].name : "";
+  const all = [...hordeModels].sort((a, b) => rank(a) - rank(b));
+  return all[0] ? all[0].name : "";
 }
 const sleep = (ms, signal) => new Promise((res, rej) => {
   const t = setTimeout(res, ms);
