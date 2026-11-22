@@ -171,8 +171,10 @@ The second page on the site demonstrates Laya's continuous-learning loop (the sh
     CORS-open, keyless (`apikey: ***`). The page lists the live models (often Qwen variants,
     e.g. `Qwen/Qwen3.8-Flash-Next`), submits each escalation to `/generate/text/async` and polls
     the queue with the live position shown; “Stop” aborts a waiting job.
-  - **Qwen in your browser:** a real local Qwen (`onnx-community/Qwen2.5-0.5B` / `-1.5B`) via
-    Transformers.js over ONNX/WASM/WebGPU — fully offline after the one-time download.
+  - **Qwen in your browser:** a real local Qwen (`onnx-community/Qwen2.5-0.5B-Instruct` /
+    `Qwen2.5-1.5B-Instruct`) via Transformers.js over ONNX/WASM/WebGPU — fully offline after
+    the one-time download. The Instruct variants are used because they reliably answer the
+    strict one-word YES/NO verdict prompt.
   - **Your OpenAI-compatible endpoint:** hosted Qwen 3.8 27B, OpenRouter, a self-hosted vLLM.
   - An explicitly-labeled **offline** deterministic table exists for dev/CI, not a real model.
 - The teacher's verdict is **learned in-browser**: `escalator.js` keeps a small per-criterion

@@ -289,6 +289,8 @@ async function loadModelInner() {
   window.__esc = {
     EXAMPLES, features, rawLogits, BOUNDS_MIN,
     criteria: () => criteria, bounds: () => bounds, learner: () => learner,
+    ask: { horde: askHorde, wasm: askWasm, live: askLiveLLM, prompt: buildVerdictPrompt },
+    wasmState: () => wasmQwen,
   };
   window.escReady = true; // the session is free for inference now
 }
@@ -387,7 +389,7 @@ async function askHorde(cfg, ex, cd, signal, onProgress) {
   if (!submit.ok) throw new Error(`AI Horde submit HTTP ${submit.status}${sj?.message ? ": " + sj.message : ""}`);
   if (!sj || !sj.id) throw new Error("AI Horde accepted no job ID (worker queue may be full — try another model or later).");
   onProgress?.(`AI Horde · ${model} — queued (job ${sj.id.slice(0, 8)}…)`);
-  const deadline = Date.now() + 10 * 60 * 1000; // free queues move slowly; cap per escalation
+  const deadline = Date.now() + 5 * 60 * 1000; // free public queues are volatile; cap per escalation
   while (Date.now() < deadline) {
     await sleep(4000, signal);
     const sr = await fetch(`${HORDE_API}/generate/text/status/${encodeURIComponent(sj.id)}`, { headers: { apikey: HORDE_HD.apikey }, signal });
@@ -402,12 +404,23 @@ async function askHorde(cfg, ex, cd, signal, onProgress) {
     }
     onProgress?.(`AI Horde · ${model} — queue position ${s.queue_position ?? "?"} (${Math.round((Date.now() - (deadline - 10 * 60 * 1000)) / 1000)}s waiting…)`);
   }
-  throw new Error("AI Horde queue did not clear in 10 min — stop and retry, or pick a faster model.");
+  throw new Error("AI Horde queue did not clear in 5 min — stop and retry, pick a faster model, or use the in-browser Qwen.");
 }
 
 // ---- Qwen in this browser (Transformers.js, real local model) ----
-let wasmQwen = null; // { pipe, repo }
-const WASM_PRESETS = ["onnx-community/Qwen2.5-0.5B", "onnx-community/Qwen2.5-1.5B"];
+let wasmQwen = null; // { pipe, tokenizer, repo }
+// Build the generation prompt: use the tokenizer's chat template when present,
+// otherwise fall back to a plain "System/User" prompt (some ONNX tokenizer files ship without one).
+function wasmPrompt(sys, user) {
+  const messages = [{ role: "system", content: sys }, { role: "user", content: user }];
+  try {
+    let out = wasmQwen.tokenizer.apply_chat_template(messages, { add_generation_prompt: true, return_dict: false });
+    if (out && typeof out === "object") out = out.text || ""; // older/newer versions may return a dict
+    if (typeof out === "string" && out) return { text: out, chat: true };
+  } catch { /* tokenizer has no chat template */ }
+  return { text: "System: " + sys + "\n\nUser: " + user + "\nAssistant:", chat: false };
+}
+const WASM_PRESETS = ["onnx-community/Qwen2.5-0.5B-Instruct", "onnx-community/Qwen2.5-1.5B-Instruct"];
 async function loadWasmQwen(repo, onProgress) {
   if (wasmQwen && wasmQwen.repo === repo) return wasmQwen;
   const mod = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.1/dist/transformers.min.js");
@@ -418,20 +431,20 @@ async function loadWasmQwen(repo, onProgress) {
   onProgress?.(`Loading ${repo} model weights…`);
   const pipe = await pipeline("text-generation", repo, { progress_callback: onProgress });
   onProgress?.("Running warm-up pass…");
-  await pipe(tokenizer.apply_chat_template("hi", { add_generation_prompt: false }), { max_new_tokens: 1, do_sample: false });
+  await pipe("warm up", { max_new_tokens: 1, do_sample: false });
   wasmQwen = { pipe, tokenizer, repo };
   return wasmQwen;
 }
 async function askWasm(ex, cd) {
   if (!wasmQwen) throw new Error("In-browser Qwen not loaded yet — press “Load Qwen in browser” first.");
   const { sys, user } = buildVerdictPrompt(ex, cd);
-  const prompt = wasmQwen.tokenizer.apply_chat_template([
-    { role: "system", content: sys }, { role: "user", content: user },
-  ], { add_generation_prompt: true });
+  const { text: prompt } = wasmPrompt(sys, user);
   const out = await wasmQwen.pipe(prompt, { max_new_tokens: 16, do_sample: false });
-  const text = (out[0]?.generated_text || "").trim();
+  // With a chat template, generated_text includes the prompt; strip it to judge only the answer.
+  let text = (out[0]?.generated_text || "").trim();
+  if (text.startsWith(prompt)) text = text.slice(prompt.length).trim();
   const label = parseVerdict(text);
-  if (label == null) throw new Error("model answer was not a clear YES/NO: " + text.slice(0, 80));
+  if (label == null) throw new Error("model answer was not a clear YES/NO: " + (text || "(empty)").slice(0, 80));
   return label;
 }
 
@@ -538,18 +551,18 @@ async function runExampleInner(idx) {
   let calls = 0, failed = [];
   for (const r of esc) {
     if (runAbort?.signal.aborted) { failed.push(r); break; }
-    addLog(`${ex.name} · ${r.cd.id} ${criteria[r.i].description}`, `${r.status} — asking the teacher…`, false);
+    addLog(`${ex.name} · ${r.cd.id} ${criteria[r.i].description} — ${r.status}: asking the teacher…`);
     try {
       const t = await askTeacher(ex, r.cd, runAbort?.signal, (msg) => { $("kNote").textContent = msg; });
       calls++;
       learner.push(phi, r.i, t.label);
       r.label = t.label;
       r.learned = true;
-      addLog(`${ex.name} · ${r.cd.id}`, `→ teacher said ${t.label ? "VIOLATION" : "no violation"} · ${t.source}`);
+      addLog(`${ex.name} · ${r.cd.id} — teacher said ${t.label ? "VIOLATION" : "no violation"} (${t.source})`);
     } catch (e) {
-      if (e?.name === "AbortError") { failed.push(r); break; }
+      if (e?.name === "AbortError") { failed.push(r); addLog(`${ex.name} · ${r.cd.id} — stopped.`, "warn"); break; }
       calls++; failed.push(r);
-      addLog(`${ex.name} · ${r.cd.id}`, `escalation failed: ${e.message}`, true);
+      addLog(`${ex.name} · ${r.cd.id} — escalation failed: ${e.message}`, "warn");
       r.status = "failed";
     }
   }
@@ -597,7 +610,7 @@ async function autoRun() {
     stats.rounds.push({ calls, abstainPct: totNow ? Math.round((escNow / totNow) * 100) : 0 });
     if (stats.rounds.length > 12) stats.rounds.shift();
     drawChart();
-    addLog(`Round ${stats.rounds.length}: ${calls} teacher call${calls === 1 ? "" : "s"} · ${stats.rounds[stats.rounds.length - 1].abstainPct}% of candidate criteria needed the teacher this pass`, false, true);
+    addLog(`Round ${stats.rounds.length}: ${calls} teacher call${calls === 1 ? "" : "s"} · ${stats.rounds[stats.rounds.length - 1].abstainPct}% of candidate criteria needed the teacher this pass`, "info", true);
   } catch (e) {
     if (e?.name === "AbortError") addLog("Run stopped (queued LLM calls aborted).", "warn");
     else addLog("Run stopped: " + e.message, "warn");
